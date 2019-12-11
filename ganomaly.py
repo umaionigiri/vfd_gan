@@ -75,6 +75,8 @@ class BaseModel():
                         ('err_d', self.err_d.item()),
                         ('err_g', self.err_g.item()),
                         ('err_g_adv', self.err_g_adv.item()),
+                        ('err_g_adv_s', self.err_g_adv_s.item()),
+                        ('err_g_adv_t', self.err_g_adv_t.item()),
                         ('err_g_con', self.err_g_con.item()),
                         #('err_g_enc', self.err_g_enc.item()),
                         })
