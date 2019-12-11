@@ -61,8 +61,8 @@ class MdfDataLoader(Dataset):
             frsize_lb = torch.zeros(self.nfr)
             frsize_mask = torch.zeros_like(frsize_data)
         
-           
-        return frsize_data, frsize_lb, frsize_mask
+
+        return frsize_data*2-1, frsize_lb, frsize_mask
 
     def __len__(self):
         return self.total_div_nfr[-1]
@@ -88,7 +88,7 @@ class MdfDataLoader(Dataset):
                 frame = cv2.bitwise_not(frame)
             else:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = Image.fromarray(np.uint8(frame))
+                frame = Image.fromarray(np.uint8(frame)) 
             data.append(frame)
         cap.release()
         return data

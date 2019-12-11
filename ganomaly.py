@@ -96,7 +96,7 @@ class BaseModel():
             self.writer.add_scalar(tag, err, self.total_steps)
         for tag, v in self.imgs_dict.items():
             grid = [make_grid(f, nrow=self.args.batchsize, 
-                            normalize=False) 
+                            normalize=True) 
                     for f in v.permute(2, 0, 1, 3, 4)]
             self.writer.add_video(tag, torch.unsqueeze(torch.stack(grid), 0), self.total_steps)
 

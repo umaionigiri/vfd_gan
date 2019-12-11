@@ -48,6 +48,7 @@ class NetG(nn.Module):
         self.upsamp = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
 
         self.conv_last = nn.Conv3d(ngf, nc, 3, stride=1, padding=1, bias=False)
+        self.tanh = nn.Tanh()
 
     def forward(self, x):
 
@@ -91,26 +92,8 @@ class NetG(nn.Module):
         x = torch.cat([x, dconv1], dim=1)
         x = self.uconv1(x)
 
-        gen_vi = self.conv_last(x)
-        
-        """
-        # Encode 2
-        # (32, 128) -> (16, 64)
-        dconv1 = self.dconv1(gen_vi)
-        x = self.maxpool(dconv1)
-        # (16, 64) -> (8, 32)
-        dconv2 = self.dconv2(x)
-        x = self.maxpool(dconv2)
-        # (8, 32) -> (4, 16)
-        dconv3 = self.dconv3(x)
-        x = self.maxpool(dconv3)
-        # (4, 16) -> (2, 8)
-        dconv4 = self.dconv4(x)
-        x = self.maxpool(dconv4)
-
-        latent_o = self.dconv5(x)
-        """
-
+        x = self.conv_last(x)
+        gen_vi = self.tanh(x)
 
         return latent_i, gen_vi
         
