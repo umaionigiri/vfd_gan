@@ -350,9 +350,9 @@ class Ganomaly(BaseModel):
         self.input_flow = video_to_flow(self.input).to(self.device)
         self.fake_flow = video_to_flow(self.fake.detach()).to(self.device)
         self.s_pred_real, self.s_feat_real, self.t_pred_real, self.t_feat_real \
-                = self.netd(self.input, self.input_flow)
+                = self.netd(self.input, self.input_flow.detach())
         self.s_pred_fake, self.s_feat_fake, self.t_pred_fake, self.t_feat_fake \
-                = self.netd(self.fake.detach(), self.fake_flow)
+                = self.netd(self.fake.detach(), self.fake_flow.detach())
     
     def backward_g(self):
         self.err_g_adv_s = self.l_adv(self.s_feat_real, self.s_feat_fake)
