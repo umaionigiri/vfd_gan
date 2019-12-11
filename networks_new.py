@@ -130,9 +130,9 @@ class NetdConv(nn.Module):
         return x
 
 
-class Disc(nn.Module):
+class SDisc(nn.Module):
     def __init__(self, nc, nfr, ndf=32, kernel=None, padding=None):
-        super(Disc, self).__init__()
+        super(SDisc, self).__init__()
 
         # input size == (B, C, D, H, W)
         netgconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
@@ -175,13 +175,48 @@ class Disc(nn.Module):
 
         return classifier.squeeze(1), features
 
+class TDisc(nn.Module):
+    def __init__(self, nc, isize, ndf=32, kernel=None, padding=None):
+        super(TDisc, self).__init__()
+
+        # input size == (B, C, D, H, W)
+        netgconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
+        self.dconv1 = netgconv(nc, ndf)
+        self.dconv2 = netgconv(ndf, ndf*2)
+        self.dconv3 = netgconv(ndf*2, ndf*4)
+
+        self.maxpool = nn.MaxPool3d((2, 1, 1)) 
+        self.gpool = nn.AvgPool3d((1, isize, isize), stride=1)
+        self.linear = nn.Linear(ndf*4*2, 1)
+        self.sigmoid = nn.Sigmoid()
+
+
+    def forward(self, x):
+        # (16, 128)
+        x = self.dconv1(x)
+        x = self.maxpool(x)
+        # (8, 128)
+        x = self.dconv2(x)
+        x = self.maxpool(x)
+        # (4, 32)
+        x = self.dconv3(x)
+        features = self.maxpool(x)
+        # (2, 16)
+
+        x = self.gpool(features) # isize -> 1
+        x = self.linear(x.view(x.shape[0], -1)) # (B, ndf*4, 2, 1, 1) -> (B, 1)
+        classifier = self.sigmoid(x)
+
+        return classifier.squeeze(1), features
+
+
 
 class NetD(nn.Module):
     def __init__(self, args):
         super(NetD, self).__init__()
 
-        self.spatdisc = Disc(args.ich, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
-        self.tempdisc = Disc(args.ich, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
+        self.spatdisc = SDisc(args.ich, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
+        self.tempdisc = TDisc(args.ich, args.isize, kernel=(3, 1, 1), padding=(1, 0, 0))
 
     def forward(self, x, y):
 
