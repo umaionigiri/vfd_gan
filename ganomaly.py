@@ -178,7 +178,7 @@ class BaseModel():
                 predict = np.expand_dims(morphology_proc(norm_diff), axis=1)
                 # test video summary
                 self.test_imgs_dict.update({
-                        'test/input': torch.cat([self.input, gout], dims=3),
+                        'test/input_gout': torch.cat([self.input, gout], dim=3),
                         'test/gt_predict': torch.cat([self.gt, torch.from_numpy(predict).to(self.device)], dim=3)
                     })
                 for t, v in self.test_imgs_dict.items():

@@ -113,6 +113,7 @@ class DataLoader(object):
                             video_transforms.RandomRotation(10),
                             video_transforms.RandomCrop((self.args.isize, self.args.isize)),
                             video_transforms.RandomHorizontalFlip(),
+                            #video_transforms.ColorJitter(),
                             volume_transforms.ClipToTensor()
                             ])
         test_transforms = video_transforms.Compose([
