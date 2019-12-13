@@ -86,12 +86,12 @@ class BaseModel():
                 fake_flow = self.gout_flow
 
                 self.train_errors_dict.update({
-                                ('loss/err_d/train', self.err_d.item()),
-                                ('loss/err_g/train', self.err_g.item()),
-                                ('loss/err_g_adv/train', self.err_g_adv.item()),
-                                ('loss/err_g_adv_s/train', self.err_g_adv_s.item()),
-                                ('loss/err_g_adv_t/train', self.err_g_adv_t.item()),
-                                ('loss/err_g_con/train', self.err_g_con.item()),
+                                ('loss/train/err_d', self.err_d.item()),
+                                ('loss/train/err_g', self.err_g.item()),
+                                ('loss/train/err_g_adv', self.err_g_adv.item()),
+                                ('loss/train/err_g_adv_s', self.err_g_adv_s.item()),
+                                ('loss/train/err_g_adv_t', self.err_g_adv_t.item()),
+                                ('loss/train/err_g_con', self.err_g_con.item()),
                                 })
                 self.train_imgs_dict.update({
                         "train/input,gen,input_flow, gen_flow": torch.cat([reals, gout, real_flow, fake_flow], dim=3),
@@ -185,8 +185,7 @@ class BaseModel():
                     grid = [make_grid(f, nrow=self.args.batchsize, normalize=True) for f in v.permute(2, 0, 1, 3, 4)]
                     self.writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), self.test_iter)
  
-                pbar.set_postfix(OrderedDict(loss="{:.4f}".format(self.err_g)))
-                pbar.set_description("[TEST Epoch %d/%d]" % (self.epoch+1, self.args.ep))
+                pbar.set_description("[TEST  Epoch %d/%d]" % (self.epoch+1, self.args.ep))
 
             # AUC
             gt = np.asarray(gt, dtype=np.int32).flatten()
@@ -196,12 +195,12 @@ class BaseModel():
             self.writer.add_scalar('auc', auc, self.epoch)
 
             self.test_errors_dict.update({
-                        ('loss/err_d/test', np.mean(err_d)),
-                        ('loss/err_g/test', np.mean(err_g)),
-                        ('loss/err_g_adv/test', np.mean(err_g_adv)),
-                        ('loss/err_g_adv_s/test', np.mean(err_g_adv_s)),
-                        ('loss/err_g_adv_t/test', np.mean(err_g_adv_t)),
-                        ('loss/err_g_con/test', np.mean(err_g_con)),
+                        ('loss/test/err_d', np.mean(err_d)),
+                        ('loss/test/err_g', np.mean(err_g)),
+                        ('loss/test/err_g_adv', np.mean(err_g_adv)),
+                        ('loss/test/err_g_adv_s', np.mean(err_g_adv_s)),
+                        ('loss/test/err_g_adv_t', np.mean(err_g_adv_t)),
+                        ('loss/test/err_g_con', np.mean(err_g_con)),
                         })
             for tag, err in self.test_errors_dict.items():
                 self.writer.add_scalar(tag, err, self.epoch)
