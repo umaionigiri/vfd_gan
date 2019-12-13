@@ -17,27 +17,24 @@ class Args():
         self.parser.add_argument('--result_root', default=RESULT_PATH, type=str, help='save any result path')
 
         # Dataloader
-        self.parser.add_argument('--dataset', default="gano", type=str, help='train dataset ')
         self.parser.add_argument('--isize', default=128, type=int, help='input frame size')
         self.parser.add_argument('--ich', default=3, type=int, help='input channel size, RGB=3')
-        self.parser.add_argument('--nfr', default=32, type=int, help='input num frame')
-        self.parser.add_argument('--batchsize', default=16, type=int, help='input batch size')
-        self.parser.add_argument('--workers', default=8, type=int, help='num_workers')
+        self.parser.add_argument('--nfr', default=16, type=int, help='input num frame')
+        self.parser.add_argument('--batchsize', default=8, type=int, help='input batch size')
+        self.parser.add_argument('--workers', default=4, type=int, help='num_workers')
 
         # Network
-        self.parser.add_argument('--model', default="gano", type=str, help='train model ')
-        self.parser.add_argument('--nz', default=512, type=int, help='size of the latent z vector')
-        self.parser.add_argument('--ngf', default=16, type=int, help='input num frame')
-        self.parser.add_argument('--extralayers', default=0, type=int, help='Number of extra layers on gen and disc')
+        self.parser.add_argument('--model', default="ganbase", type=str, help='train model ')
 
         # Train
         self.parser.add_argument('--lr', default=0.0002, type=float, help='initial learning rate for adam')
         self.parser.add_argument('--beta1', default=0.5, type=float, help='momentum term of adam')
         self.parser.add_argument('--w_adv', default=1, type=float, help='adversarial loss weight')
         self.parser.add_argument('--w_con', default=50, type=float, help='reconstruction loss weight')
-        self.parser.add_argument('--w_enc', default=1, type=float, help='encoder loss weight')
         self.parser.add_argument('--display_freq', default=1, type=int, 
                                 help='frequency of showing training results on tensorboard')
+        self.parser.add_argument('--test_freq', default=1, type=int, 
+                                help='frequency of showing test results on tensorboard')
         self.parser.add_argument('--save_weight_freq', default=10, type=int, 
                                 help='frequency of saving weights')
 
@@ -45,10 +42,7 @@ class Args():
         self.parser.add_argument('--load_weights', default=" ", type=str, help='train or test ')
         self.parser.add_argument('--metric', default="roc", type=str, help='train model ')
 
-
-
         self.parser.add_argument('--resume', default="", type=str, help='train model ')
-        self.parser.add_argument('--phase', default="train", type=str, help='train model ')
         self.parser.add_argument('--isTrain', default=True, action="store_true", help='train or test ')
 
 

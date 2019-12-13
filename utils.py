@@ -2,38 +2,47 @@
 import cv2
 from PIL import Image
 import numpy as np
+import math
 
 import torch
 import torchvision.transforms 
 from videotransforms import video_transforms, volume_transforms
+from torchvision.utils import save_image, make_grid
 
 
-def tensor_to_cv2(video):
-    # B, C, D, H, W
-    cv2_videos = []
-    for v in video.transpose(1, 2):
-        cv2_imgs = [np.asarray(torchvision.transforms.ToPILImage()(img)) for img in v]
-        cv2_videos.append(np.stack(cv2_imgs))
-    return np.stack(cv2_videos)
+def l2_loss(inp, target, size_average=True):
+    if size_average:
+        return torch.mean(torch.pow((inp-target), 2))
+    else:
+        return torch.pow((inp-target), 2)
+
+def normalize(tensor):
+    """
+    shift tensor image to the range (0, 1)
+    """
+    tensor = tensor.clone()
+    min = float(tensor.min())
+    max = float(tensor.max())
+    tensor.clamp_(min=min, max=max)
+    return tensor.add_(-min).div_(max-min+1e-5)
+
 
 
 def video_to_flow(video):
-    video = video.cpu()
-    # tensor to pil
-    # video = (B, C, D, H, W)
-    cv2_video = tensor_to_cv2(video)
-    # cv2_video = (B, D, C, H, W)
+    # video tensor(-1, 1) to ndarray(0, 255)
+    norm_video = [normalize(v) for v in video.permute(2, 0, 1, 3, 4)] # (D, B, C, W, H)
+    norm_video = torch.stack(norm_video).permute(1, 0, 3, 4, 2) # (B, D, W, H, C)
+    nd_video = norm_video.cpu().numpy()
     
     transform = video_transforms.Compose([
             volume_transforms.ClipToTensor()
         ])
-
-    
+    # calc optical flow 
     flow_videos = []
-    for v in cv2_video:
+    for v in nd_video:
         flow_imgs = []
         for i, img in enumerate(v):
-            next_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            next_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
             if i == 0:
                 hsv_mask = np.zeros_like(img)
                 hsv_mask[:,:,1] = 255
@@ -53,6 +62,25 @@ def video_to_flow(video):
         flow_imgs = transform(flow_imgs)
         flow_videos.append(flow_imgs)
         
-    return torch.stack(flow_videos)
+    return torch.stack(flow_videos)*2-1
  
+def rgb_to_gray(video):
+    gray_video = []
+    for v in video:
+        gray_img = [cv2.cvtColor(i, cv2.COLOR_RGB2GRAY) for i in v]
+        gray_video.append(np.stack(gray_img))
+    return np.expand_dims(np.stack(gray_video), axis=-1)
+
+
+def morphology_proc(video):
+    morph_video = []
+    kernel = np.ones((5, 5), np.uint8)
+    for v in video:
+        op_img = [cv2.morphologyEx(i, cv2.MORPH_OPEN, kernel) for i in v]
+        #cl_img = [cv2.morphologyEx(i, cv2.MORPH_OPEN, kernel) for i in v]
+        morph_video.append(np.stack(op_img))
+    return np.stack(morph_video)
+
+
+
 

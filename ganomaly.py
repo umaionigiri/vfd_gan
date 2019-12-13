@@ -1,10 +1,9 @@
 
-import time
 import os
-import cv2
-from PIL import Image
 from tqdm import tqdm
 import numpy as np
+import json
+import cv2
 
 from collections import OrderedDict
 from torch.autograd import Variable
@@ -18,14 +17,8 @@ import torch.backends.cudnn as cudnn
 
 from evaluate import evaluate
 from networks_new import NetG, NetD, weights_init
-from utils import video_to_flow
+from utils import *
 
-
-def l2_loss(inp, target, size_average=True):
-    if size_average:
-        return torch.mean(torch.pow((inp-target), 2))
-    else:
-        return torch.pow((inp-target), 2)
 
 class BaseModel():
     """
@@ -38,123 +31,97 @@ class BaseModel():
         self.args = args
         self.dataloader = dataloader
 
-        self.imgs_dict = OrderedDict()
-        self.errors_dict = OrderedDict()
+        self.train_iter = 0
+        self.test_iter = 0
+        self.train_imgs_dict = OrderedDict()
+        self.test_imgs_dict = OrderedDict()
+        self.train_errors_dict = OrderedDict()
+        self.test_errors_dict = OrderedDict()
+        self.auc_dict = OrderedDict()
         
         # set using gpu
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # make save root dir
-        comment = "bs-{}_lr-{}_w-a{}c{}e{}".format(args.batchsize, args.lr, 
-                                                    args.w_adv, args.w_con, args.w_enc)
-        self.save_root_dir = os.path.join(args.result_root, args.model, comment)
+        from datetime import datetime
+        current_time = datetime.now().strftime("%b%d_%H-%M-%S")
+        comment = "b{}xd{}xwh{}_lr-{}_w-a{}c{}".format(args.batchsize, args.nfr, args.isize, 
+                                                    args.lr, args.w_adv, args.w_con)
+        self.save_root_dir = os.path.join(args.result_root, args.model, comment, current_time)
         if not os.path.exists(self.save_root_dir): os.makedirs(self.save_root_dir)
         # make weights save dir
         self.weight_dir = os.path.join(self.save_root_dir,'weights')
         if not os.path.exists(self.weight_dir): os.makedirs(self.weight_dir)
         # make tensorboard logdir 
-        from datetime import datetime
-        current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        logdir = os.path.join(self.save_root_dir, "runs", current_time)
+        logdir = os.path.join(self.save_root_dir, "runs")
         if not os.path.exists(logdir): os.makedirs(logdir)
         self.writer = SummaryWriter(log_dir=logdir)
-        #self.writer = SummaryWriter(comment=comment)
-                
-        
+        #save args
+        with open(self.save_root_dir+"/args.txt", mode="w") as f:
+            json.dump(args.__dict__, f, indent=4)
+
     def set_input(self, input:torch.Tensor):
         with torch.no_grad():
             self.input.resize_(input[0].size()).copy_(input[0])
-            self.gt.resize_(input[2].size()).copy_(input[2])
+            self.gt.resize_(input[1].size()).copy_(input[1])
             self.label.resize_(input[2].size())
-            if self.total_steps == self.args.batchsize:
-                self.fixed_input.resize_(input[0].size()).copy_(input[0])
 
+    def train_one_epoch(self):
 
-    def get_errors(self):
-        self.errors_dict.update({
-                        ('err_d', self.err_d.item()),
-                        ('err_g', self.err_g.item()),
-                        ('err_g_adv', self.err_g_adv.item()),
-                        ('err_g_adv_s', self.err_g_adv_s.item()),
-                        ('err_g_adv_t', self.err_g_adv_t.item()),
-                        ('err_g_con', self.err_g_con.item()),
-                        #('err_g_enc', self.err_g_enc.item()),
-                        })
+        self.netg.train()
+        self.netd.train()
 
-    def get_train_images(self):
+        pbar = tqdm(self.dataloader['train'], leave=True, ncols=100, total=len(self.dataloader['train']))
+        for i, data in enumerate(pbar):
+            self.train_iter += 1
 
-        reals = self.input.data
-        fakes = self.fake
-        fixed = self.netg(self.fixed_input)[0]
-        
-        self.imgs_dict.update({
-                "train input/gen": torch.cat([reals, fakes], dim=3),
-            })
-        
-    def update_summary(self):
-        self.get_errors()
-        self.get_train_images()
-        for tag, err in self.errors_dict.items():
-            self.writer.add_scalar(tag, err, self.total_steps)
-        for tag, v in self.imgs_dict.items():
-            grid = [make_grid(f, nrow=self.args.batchsize, 
-                            normalize=True) 
-                    for f in v.permute(2, 0, 1, 3, 4)]
-            self.writer.add_video(tag, torch.unsqueeze(torch.stack(grid), 0), self.total_steps)
-
-    def save_weights(self, epoch):
-        torch.save({'epoch': epoch + 1, 'state_dict': self.netg.state_dict()},
-                   '%s/ep%04d_netG.pth' % (self.weight_dir, epoch))
-        torch.save({'epoch': epoch + 1, 'state_dict': self.netd.state_dict()},
-                   '%s/ep%04d_netD.pth' % (self.weight_dir, epoch))
-
-
-    def train(self):
-
-        self.total_steps = 0
-        best_auc = 0
-        epoch_iter = 0
-        
-        
-        print(" >> Training model %s." % self.args.model)
-
-        for self.epoch in range(self.args.ep):
-
-            self.netg.train()
-            pbar = tqdm(self.dataloader['train'], leave=True, 
-                        ncols=100, total=len(self.dataloader['train']))
-            for i, data in enumerate(pbar):
-                self.total_steps += 1
-                epoch_iter += 1
-
-                self.set_input(data)
-                self.optimize_params()
-                
-                if self.total_steps % self.args.display_freq == 0:
-                    print("\n--update summary--")
-                    self.update_summary()
-                
-                pbar.set_postfix(OrderedDict(loss="{:.4f}".format(self.err_g)))
-                pbar.set_description("[Epoch %d/%d]" % (self.epoch+1, self.args.ep))
-
-            #Test
-            """
-            res = self.test()
-            if res['AUC'] > best_auc:
-                best_auc = res['AUC']
-            """
-            if self.epoch % self.args.save_weight_freq == 0:
-                self.save_weights(self.epoch)
-
-            print(">> Training model %s. Epoch %d/%d " % (self.name, self.epoch+1, self.args.ep))
+            self.set_input(data)
+            self.optimize_params()
             
-        print(" >> Training model %s.[Done]" % self.args.model)
+            if self.train_iter % self.args.display_freq == 0:
+                # -- Update Summary on Tensorboard --
+                reals = self.input.data
+                gout = self.gout
+                real_flow = self.input_flow
+                fake_flow = self.gout_flow
 
-    def test(self):
+                self.train_errors_dict.update({
+                                ('loss/err_d/train', self.err_d.item()),
+                                ('loss/err_g/train', self.err_g.item()),
+                                ('loss/err_g_adv/train', self.err_g_adv.item()),
+                                ('loss/err_g_adv_s/train', self.err_g_adv_s.item()),
+                                ('loss/err_g_adv_t/train', self.err_g_adv_t.item()),
+                                ('loss/err_g_con/train', self.err_g_con.item()),
+                                })
+                self.train_imgs_dict.update({
+                        "train/input,gen,input_flow, gen_flow": torch.cat([reals, gout, real_flow, fake_flow], dim=3),
+                    })
+                for tag, err in self.train_errors_dict.items():
+                    self.writer.add_scalar(tag, err, self.train_iter)
+                for tag, v in self.train_imgs_dict.items():
+                    grid = [make_grid(f, nrow=self.args.batchsize, normalize=True) 
+                            for f in v.permute(2, 0, 1, 3, 4)]
+                    self.writer.add_video(tag, torch.unsqueeze(torch.stack(grid), 0), self.train_iter)
+
+            pbar.set_postfix(OrderedDict(loss="{:.4f}".format(self.err_g)))
+            pbar.set_description("[TRAIN Epoch %d/%d]" % (self.epoch+1, self.args.ep))
+
+       
+    def test_epoch_end(self):
+        
+        self.netg.eval()
+        self.netd.eval()
+
+        err_g_adv_s = []
+        err_g_adv_t = []
+        err_g_adv = []
+        err_g_con = []
+        err_g = []
+        err_d = []
 
         with torch.no_grad():
+            # load weights 
             if self.args.load_weights != " " :
-                #path = self.weight_dir + "ep%04d_netG.pth".format(self.epoch)
                 path = self.args.load_weights
                 pretrained_dict = torch.load(path)['state_dict']
 
@@ -164,119 +131,102 @@ class BaseModel():
                     raise IOError("netG weights not found")
                 print("Loaded weights.")
 
-            self.args.phase = 'test'
+            # Test
+            pbar = tqdm(self.dataloader['test'], leave=True, ncols=100, total=len(self.dataloader['test']))
+            for i, data in enumerate(pbar):
+                self.test_iter += 1
+                # set test data 
+                self.set_input(data) # get self.input, self.gt
+                # NetG
+                gout = self.netg(self.input) # Reconstract self.input
+                # NetD
+                # calc Optical Flow 
+                input_flow = video_to_flow(self.input.detach()).to(self.device)
+                gout_flow = video_to_flow(gout.detach()).to(self.device)
+                # get disc output
+                s_pred_real, s_feat_real, t_pred_real, t_feat_real \
+                                        = self.netd(self.input, input_flow.detach())
+                s_pred_fake, s_feat_fake, t_pred_fake, t_feat_fake \
+                                        = self.netd(gout.detach(), gout_flow.detach())
+                # Calc err_g
+                err_g_adv_s.append(self.l_adv(s_feat_real, s_feat_fake).item())
+                err_g_adv_t.append(self.l_adv(t_feat_real, t_feat_fake).item())
+                err_g_adv.append(err_g_adv_s[-1] + err_g_adv_t[-1])
+                err_g_con.append(self.l_con(gout, self.input).item())
+                err_g.append(err_g_adv[-1] * self.args.w_adv + err_g_con[-1] * self.args.w_con)
+                # Calc err_d
+                err_d_real_s = self.l_bce(s_pred_real, self.real_label).item()
+                err_d_real_t = self.l_bce(t_pred_real, self.real_label).item()
+                err_d_fake_s = self.l_bce(s_pred_fake, self.gout_label).item()
+                err_d_fake_t = self.l_bce(t_pred_fake, self.gout_label).item()
+                err_d_real = (err_d_real_s + err_d_real_t) * 0.5
+                err_d_fake = (err_d_fake_s + err_d_fake_t) * 0.5
+                err_d.append((err_d_real + err_d_fake) * 0.5)
+                
 
-            """
-            self.an_scores = torch.zeros(size=(len(self.dataloader['test'].dataset),), 
-                                                dtype=torch.float32, device=self.device)
-            self.gt_labels = torch.zeros(size=(len(self.dataloader['test'].dataset),), 
-                                                dtype=torch.long, device=self.device)
-            self.latent_i = torch.zeros(size=(len(self.dataloader['test'].dataset), self.args.nz),
-                                                dtype=torch.float32, device=self.device)
-            self.latent_o = torch.zeros(size=(len(self.dataloader['test'].dataset), self.args.nz),
-                                                dtype=torch.float32, device=self.device)
-            """
+                # predict image
+                # diff between two videos
+                diff = torch.abs(self.input - gout)
+                # normalize diff -> (0, 1)
+                norm_diff = [normalize(v) for v in diff.permute(2, 0, 1, 3, 4)]  # (D, B, C, W, H)
+                norm_diff = torch.stack(norm_diff).permute(1, 0, 3, 4, 2) # (B, D, W, H, C)
+                # tensor to numpy
+                gt = self.gt.permute(0, 2, 3, 4, 1).cpu().numpy()
+                norm_diff = norm_diff.cpu().numpy()
+                # post processing 
+                norm_diff = rgb_to_gray(norm_diff)
+                predict = np.expand_dims(morphology_proc(norm_diff), axis=1)
+                # test video summary
+                self.test_imgs_dict.update({
+                        'test/input': torch.cat([self.input, gout], dims=3),
+                        'test/gt_predict': torch.cat([self.gt, torch.from_numpy(predict).to(self.device)], dim=3)
+                    })
+                for t, v in self.test_imgs_dict.items():
+                    grid = [make_grid(f, nrow=self.args.batchsize, normalize=True) for f in v.permute(2, 0, 1, 3, 4)]
+                    self.writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), self.test_iter)
+ 
+                pbar.set_postfix(OrderedDict(loss="{:.4f}".format(self.err_g)))
+                pbar.set_description("[TEST Epoch %d/%d]" % (self.epoch+1, self.args.ep))
+
+            # AUC
+            gt = np.asarray(gt, dtype=np.int32).flatten()
+            predict = np.asarray(predict).flatten()
+            auc = evaluate(gt, predict, self.save_root_dir, metric=self.args.metric)
+
+            self.writer.add_scalar('auc', auc, self.epoch)
+
+            self.test_errors_dict.update({
+                        ('loss/err_d/test', np.mean(err_d)),
+                        ('loss/err_g/test', np.mean(err_g)),
+                        ('loss/err_g_adv/test', np.mean(err_g_adv)),
+                        ('loss/err_g_adv_s/test', np.mean(err_g_adv_s)),
+                        ('loss/err_g_adv_t/test', np.mean(err_g_adv_t)),
+                        ('loss/err_g_con/test', np.mean(err_g_con)),
+                        })
+            for tag, err in self.test_errors_dict.items():
+                self.writer.add_scalar(tag, err, self.epoch)
+ 
+
+    def train(self):
+
+        best_auc = 0
+        
+        print(" >> Training model %s." % self.args.model)
+
+        for self.epoch in range(self.args.ep):
+            self.train_one_epoch()
+            self.test_epoch_end()
+
+            if self.epoch % self.args.save_weight_freq == 0:
+                torch.save({'epoch': self.epoch + 1, 'state_dict': self.netg.state_dict()},
+                           '%s/ep%04d_netG.pth' % (self.weight_dir, self.epoch))
+                torch.save({'epoch': self.epoch + 1, 'state_dict': self.netd.state_dict()},
+                           '%s/ep%04d_netD.pth' % (self.weight_dir, self.epoch))
+
+            print(">> Training model %s. Epoch %d/%d " % (self.name, self.epoch+1, self.args.ep))
             
+        print(" >> Training model %s.[Done]" % self.args.model)
 
-            self.times = []
-            self.total_steps = 0
-            epoch_iter = 0
-            
-            self.gt_allfr = []
-            self.pre_allfr = []
-            __fgp = []
-
-            for i, data in enumerate(self.dataloader['test'], 0):
-                self.total_steps += self.args.batchsize
-                epoch_iter += 1
-                time_i = time.time()
-                predict = []
-
-                #Initialize data 
-                self.set_input(data)
-                self.fake, latent_i, latent_o = self.netg(self.input)
-                self.gt = self.gt
-                self.input = self.input
-                self.fake = self.fake
-                print(self.fake.shape)
-
-                #Tensor(RGB) to Numpy(Gray)
-                input = self.tensor_to_ndarray(self.input, gray=False)
-                grinp = self.tensor_to_ndarray(self.input)
-                grfake = self.tensor_to_ndarray(self.fake)
-                gt = self.tensor_to_ndarray(self.gt, gray=False)
-                #vutils.save_image(torch.from_numpy(grinp)[0][0], '/mnt/fs2_rwx/2018/ohshiro/grinp.png')
-                #Difference between input to fake
-                _predicts = []
-                for inp, fake, g in zip(grinp, grfake, gt):
-                    predicts = []
-                    for _inp, _fake, _g in zip(inp, fake, g):
-                        predict= np.array(_inp - _fake > 127, dtype=np.int32)
-                        ground = np.array(_g > 127, dtype=np.int32)
-                        self.pre_allfr.append(predict)
-                        self.gt_allfr.append(ground)
-                        predicts.append(predict)
-
-                    _predicts.append(np.stack(predicts))
-
-                self.writer.add_video('test_input', self.input, epoch_iter)
-                self.writer.add_video('test_fake', self.fake, epoch_iter)
-                self.writer.add_video('test_gt', self.gt, epoch_iter)
-                self.writer.add_video('test_predict',np.stack(_predicts), epoch_iter)
-
-
-
-                #vutils.save_image(torch.from_numpy(predicts)[0][0], '/mnt/fs2_rwx/2018/ohshiro/predicts.png')
-
-                time_o = time.time()
-                self.times.append(time_o - time_i)
-
-
-                """
-                error = torch.mean(torch.pow((latent_i-latent_o), 2), dim=1)
-                print("\n error shape == {}".format(error.size(0)))
-                print("\n gt labels shape == {}".format(self.gt_labels.shape))
-                print("\n gt shape == {}".format(self.gt.shape))
-                time_o = time.time()
-
-                self.an_scores[i*self.args.batchsize : i*self.args.batchsize+error.size(0)] \
-                        = error.reshape(error.size(0))
-                self.gt_labels[i*self.args.batchsize : i*self.args.batchsize+error.size(0)] \
-                        = self.gt.reshape(error.size(0))
-                self.latent_i[i*self.args.batchsize : i*self.args.batchsize+error.size(0), :] \
-                        = latent_i.reshape(error.size(0), self.args.nz)
-                self.latent_o[i*self.args.batchsize : i*self.args.batchsize+error.size(0), :] \
-                        = latent_o.reshape(error.size(0), self.args.nz)
-                if self.args.save_test_images:
-                    dst = os.path.join(self.args.result_root, self.args.model, 'test', 'images')
-                    if not os.path.isdir(dst):
-                        os.makedirs(dst)
-                    real, fake, _ = self.get_current_images()
-                    vutils.save_image(real, '%s/real_%03d.eps' % (dst, i+1), normalize=True)
-                    vutils.save_image(fake, '%s/fake_%03d.eps' % (dst, i+1), normalize=True)
-                """
-
-           
-           
-            #vutils.save_image(torch.from_numpy(self.pre_allfr), '/mnt/fs2_rwx/2018/ohshiro/pre_allfr.png')
-            
-            self.pre_allfr = np.asarray(self.pre_allfr).flatten()
-            self.gt_allfr = np.asarray(self.gt_allfr).flatten()
-            auc = evaluate(self.gt_allfr, self.pre_allfr, self.tst_dir,  metric=self.args.metric)
-
-            self.times = np.array(self.times)
-            self.times = np.mean(self.times[:100] * 1000)
-
-            performance = OrderedDict([('Avg Run Time (ms / batch)', self.times), ('AUC', auc)])
-
-
-            """
-            self.an_scores = (self.an_scores - torch,min(self.an_scores)) \
-                            / (torch.max(self.an_scores) - torch.min(self.an_scores))
-            auc = evaluate(self.gt_labels, self.an_scores, metric=self.args.metric)
-            """
-
-            return performance
 
 
 class Ganomaly(BaseModel):
@@ -289,7 +239,6 @@ class Ganomaly(BaseModel):
 
         # -- Misc attributes
         self.epoch = 0
-        self.times = []
 
         inp_shape = (self.args.batchsize, self.args.ich, 
                     self.args.nfr, self.args.isize, self.args.isize)
@@ -331,7 +280,7 @@ class Ganomaly(BaseModel):
         self.fixed_input = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
         self.real_label = torch.ones(size=(self.args.batchsize,), 
                                             dtype=torch.float32, device=self.device)
-        self.fake_label = torch.zeros(size=(self.args.batchsize,), 
+        self.gout_label = torch.zeros(size=(self.args.batchsize,), 
                                             dtype=torch.float32, device=self.device)
 
         #Setup Optimizer
@@ -345,33 +294,30 @@ class Ganomaly(BaseModel):
         
 
     def forward_g(self):
-        self.latent_i, self.fake = self.netg(self.input)
-
+        self.gout = self.netg(self.input)
 
     def forward_d(self):
         self.input_flow = video_to_flow(self.input).to(self.device)
-        self.fake_flow = video_to_flow(self.fake.detach()).to(self.device)
+        self.gout_flow = video_to_flow(self.gout.detach()).to(self.device)
         self.s_pred_real, self.s_feat_real, self.t_pred_real, self.t_feat_real \
                 = self.netd(self.input, self.input_flow.detach())
         self.s_pred_fake, self.s_feat_fake, self.t_pred_fake, self.t_feat_fake \
-                = self.netd(self.fake.detach(), self.fake_flow.detach())
+                = self.netd(self.gout.detach(), self.gout_flow.detach())
     
     def backward_g(self):
         self.err_g_adv_s = self.l_adv(self.s_feat_real, self.s_feat_fake)
         self.err_g_adv_t = self.l_adv(self.t_feat_real, self.t_feat_fake)
         self.err_g_adv = self.err_g_adv_s + self.err_g_adv_t
-        self.err_g_con = self.l_con(self.fake, self.input)
-        #self.err_g_enc = self.l_enc(self.latent_o, self.latent_i)
+        self.err_g_con = self.l_con(self.gout, self.input)
         self.err_g = self.err_g_adv * self.args.w_adv + \
-                    self.err_g_con * self.args.w_con  \
-                    #self.err_g_enc * self.args.w_enc
+                    self.err_g_con * self.args.w_con
         self.err_g.backward(retain_graph=True)
 
     def backward_d(self):
         self.err_d_real_s = self.l_bce(self.s_pred_real, self.real_label)
         self.err_d_real_t = self.l_bce(self.t_pred_real, self.real_label)
-        self.err_d_fake_s = self.l_bce(self.s_pred_fake, self.fake_label)
-        self.err_d_fake_t = self.l_bce(self.t_pred_fake, self.fake_label)
+        self.err_d_fake_s = self.l_bce(self.s_pred_fake, self.gout_label)
+        self.err_d_fake_t = self.l_bce(self.t_pred_fake, self.gout_label)
 
         self.err_d_real = (self.err_d_real_s + self.err_d_real_t) * 0.5
         self.err_d_fake = (self.err_d_fake_s + self.err_d_fake_t) * 0.5

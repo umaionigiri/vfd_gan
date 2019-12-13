@@ -12,11 +12,16 @@ from videotransforms import video_transforms, volume_transforms
 
 
 class MdfDataLoader(Dataset):
-    def __init__(self, nfr, path_li, transforms=None):
+    def __init__(self, isize, nfr, path_li, transforms=None):
         # set self
+        self.isize = isize
         self.nfr = nfr
         self.paths = path_li
         self.transforms = transforms
+        self.mask_transforms = video_transforms.Compose([
+                                video_transforms.Resize((self.isize, self.isize)),
+                                volume_transforms.ClipToTensor(channel_nb=1)
+                                ])
         
         # Set index
         self.data_path_li, self.mask_path_li= self.path_reader(self.paths) #video path list
@@ -55,14 +60,14 @@ class MdfDataLoader(Dataset):
  
         if "Fake" in self.data_path_li[video_id]:
             frsize_lb = torch.ones(self.nfr)
-            frsize_mask = self.video_reader(self.data_path_li[video_id], ff, mask=True)
-            if self.transforms: frsize_mask = self.transforms(frsize_mask)
+            frsize_mask = self.video_reader(self.mask_path_li[video_id], ff, mask=True)
+            if self.transforms: frsize_mask = self.mask_transforms(frsize_mask)
         elif "Original" in self.data_path_li[video_id]:
             frsize_lb = torch.zeros(self.nfr)
             frsize_mask = torch.zeros_like(frsize_data)
         
-
-        return frsize_data*2-1, frsize_lb, frsize_mask
+        
+        return frsize_data*2-1, frsize_mask, frsize_lb
 
     def __len__(self):
         return self.total_div_nfr[-1]
@@ -88,7 +93,7 @@ class MdfDataLoader(Dataset):
                 frame = cv2.bitwise_not(frame)
             else:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = Image.fromarray(np.uint8(frame)) 
+            frame = Image.fromarray(np.uint8(frame)) 
             data.append(frame)
         cap.release()
         return data
@@ -103,15 +108,17 @@ class DataLoader(object):
         self.plist = {'train': args.tr_plist, 'test': args.ts_plist}
 
         # set transforms
-        tr_transforms_li = [video_transforms.Resize((int(self.isize*1.1),int(self.isize*1.1))),
+        train_transforms = video_transforms.Compose([
+                            video_transforms.Resize((int(self.isize*1.1),int(self.isize*1.1))),
                             video_transforms.RandomRotation(10),
                             video_transforms.RandomCrop((self.args.isize, self.args.isize)),
                             video_transforms.RandomHorizontalFlip(),
-                            volume_transforms.ClipToTensor()]
-        ts_transforms_li = [video_transforms.Resize((self.isize, self.isize)),
-                            volume_transforms.ClipToTensor()]
-        train_transforms = video_transforms.Compose(tr_transforms_li)
-        test_transforms = video_transforms.Compose(ts_transforms_li)
+                            volume_transforms.ClipToTensor()
+                            ])
+        test_transforms = video_transforms.Compose([
+                            video_transforms.Resize((self.isize, self.isize)),
+                            volume_transforms.ClipToTensor()
+                            ])
         self.transforms = {'train': train_transforms, 'test':test_transforms}
     
     def load_data(self):
@@ -122,7 +129,8 @@ class DataLoader(object):
 
         # dataset
         dataset = {}
-        loader = lambda x: MdfDataLoader(self.nfr, self.plist[x], transforms=self.transforms[x])
+        loader = lambda x: MdfDataLoader(self.isize, self.nfr, 
+                                        self.plist[x], transforms=self.transforms[x])
         dataset['train'] = loader('train')
         dataset['test'] = loader('test')
        

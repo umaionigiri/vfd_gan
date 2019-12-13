@@ -95,7 +95,7 @@ class NetG(nn.Module):
         x = self.conv_last(x)
         gen_vi = self.tanh(x)
 
-        return latent_i, gen_vi
+        return gen_vi
         
 
 class NetdConv(nn.Module):

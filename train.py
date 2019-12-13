@@ -18,7 +18,7 @@ def main(args):
         model = Xception(agrs)
         model.train(args, dataloader)
                
-    elif args.model == 'gano':
+    elif args.model == 'ganbase':
         from ganomaly import Ganomaly
         print("--Load model--")
         model = Ganomaly(args, dataloader)
