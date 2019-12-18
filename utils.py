@@ -83,4 +83,16 @@ def morphology_proc(video):
 
 
 
-
+def predict_forg(input, gout):
+    # predict image
+    # diff between two videos
+    diff = torch.abs(input - gout)
+    # normalize diff -> (0, 1)
+    norm_diff = [normalize(v) for v in diff.permute(2, 0, 1, 3, 4)]  # (D, B, C, W, H)
+    norm_diff = torch.stack(norm_diff).permute(1, 0, 3, 4, 2) # (B, D, W, H, C)
+    # tensor to numpy
+    norm_diff = norm_diff.cpu().numpy()
+    # post processing 
+    norm_diff = rgb_to_gray(norm_diff)
+    predict = np.expand_dims(morphology_proc(norm_diff), axis=1)
+    return predict

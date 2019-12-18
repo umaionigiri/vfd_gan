@@ -27,10 +27,12 @@ class Args():
         self.parser.add_argument('--model', default="ganbase", type=str, help='train model ')
 
         # Train
+        self.parser.add_argument('--phase', default="train", type=str, help='train model ')
         self.parser.add_argument('--lr', default=0.0002, type=float, help='initial learning rate for adam')
         self.parser.add_argument('--beta1', default=0.5, type=float, help='momentum term of adam')
         self.parser.add_argument('--w_adv', default=1, type=float, help='adversarial loss weight')
-        self.parser.add_argument('--w_con', default=50, type=float, help='reconstruction loss weight')
+        self.parser.add_argument('--w_con', default=5, type=float, help='reconstruction loss weight')
+        self.parser.add_argument('--w_pre', default=1, type=float, help='predict loss weight')
         self.parser.add_argument('--display_freq', default=1, type=int, 
                                 help='frequency of showing training results on tensorboard')
         self.parser.add_argument('--test_freq', default=1, type=int, 

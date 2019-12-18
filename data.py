@@ -64,7 +64,7 @@ class MdfDataLoader(Dataset):
             if self.transforms: frsize_mask = self.mask_transforms(frsize_mask)
         elif "Original" in self.data_path_li[video_id]:
             frsize_lb = torch.zeros(self.nfr)
-            frsize_mask = torch.zeros_like(frsize_data)
+            frsize_mask = torch.zeros((1, self.nfr, self.isize, self.isize))
         
         
         return frsize_data*2-1, frsize_mask, frsize_lb
