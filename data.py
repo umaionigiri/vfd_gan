@@ -24,7 +24,7 @@ class MdfDataLoader(Dataset):
                                 ])
         
         # Set index
-        self.data_path_li, self.mask_path_li= self.path_reader(self.paths) #video path list
+        self.data_path_li, self.lb_path, self.mask_path_li= self.path_reader(self.paths) #video path list
         nframe_li = self.count_frame(self.mask_path_li) #num of frame list
         div_nfr_li = [ i // self.nfr for i in nframe_li] #num of nfrsize list
         # div_nfr_li -> data index
@@ -35,11 +35,13 @@ class MdfDataLoader(Dataset):
     def path_reader(self, path_list):
         data_path = [line.rstrip() for line in open(path_list)]
         mask_path = []
+        lb_path = []
         for video in data_path:
             root = video.rsplit("/", 1)[:-1]
             name = root[0].rsplit("/", 1)[-1]
             mask_path.append( os.path.join(root[0], "[Mask]" + name + ".mp4") )
-        return data_path, mask_path
+            lb_path.append( os.path.join(root[0], "[Original]" + name + ".mp4") )
+        return data_path, lb_path, mask_path
 
     def count_frame(self, path):
         nframe_li = []
@@ -59,15 +61,16 @@ class MdfDataLoader(Dataset):
             frsize_data = self.transforms(frsize_data)
  
         if "Fake" in self.data_path_li[video_id]:
-            frsize_lb = torch.ones(self.nfr)
+            frsize_lb = self.video_reader(self.lb_path_li[video_id], ff)
             frsize_mask = self.video_reader(self.mask_path_li[video_id], ff, mask=True)
-            if self.transforms: frsize_mask = self.mask_transforms(frsize_mask)
+            if self.transforms: 
+                frsize_lb = self.transforms(frsize_lb)
+                frsize_mask = self.mask_transforms(frsize_mask)
         elif "Original" in self.data_path_li[video_id]:
-            frsize_lb = torch.zeros(self.nfr)
             frsize_mask = torch.zeros((1, self.nfr, self.isize, self.isize))
+            frsize_lb = frsize_data
         
-        
-        return frsize_data*2-1, frsize_mask, frsize_lb
+        return frsize_data*2-1, frsize_lb*2-1, frsize_mask
 
     def __len__(self):
         return self.total_div_nfr[-1]

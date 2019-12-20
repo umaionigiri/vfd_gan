@@ -45,8 +45,8 @@ class BaseModel():
         # make save root dir
         from datetime import datetime
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        comment = "b{}xd{}xwh{}_lr-{}_w-a{}c{}p{}".format(args.batchsize, args.nfr, args.isize, 
-                                                    args.lr, args.w_adv, args.w_con, args.w_pre)
+        comment = "b{}xd{}xwh{}_lr-{}_w-a{}r{}".format(args.batchsize, args.nfr, args.isize, 
+                                                    args.lr, args.w_adv, args.w_real)
         self.save_root_dir = os.path.join(args.result_root, args.model, comment, current_time)
         if not os.path.exists(self.save_root_dir): os.makedirs(self.save_root_dir)
         # make weights save dir
@@ -63,8 +63,8 @@ class BaseModel():
     def set_input(self, input:torch.Tensor):
         with torch.no_grad():
             self.input.resize_(input[0].size()).copy_(input[0])
-            self.gt.resize_(input[1].size()).copy_(input[1])
-            self.label.resize_(input[2].size())
+            self.lb.resize_(input[1].size()).copy_(input[1])
+            self.gt.resize_(input[2].size()).copy_(input[2])
 
     def train_one_epoch(self):
 
@@ -80,7 +80,8 @@ class BaseModel():
             
             if self.train_iter % self.args.display_freq == 0:
                 # -- Update Summary on Tensorboard --
-                reals = self.input.data
+                inp = self.input.data
+                lb = self.lb
                 gout = self.gout
                 real_flow = self.input_flow
                 fake_flow = self.gout_flow
@@ -91,11 +92,11 @@ class BaseModel():
                                 ('train/err_g_adv', self.err_g_adv.item()),
                                 ('train/err_g_adv_s', self.err_g_adv_s.item()),
                                 ('train/err_g_adv_t', self.err_g_adv_t.item()),
-                                ('train/err_g_con', self.err_g_con.item()),
-                                ('train/err_g_pre', self.err_g_pre.item()),
+                                ('train/err_g_real', self.err_g_real.item()),
                                 })
                 self.train_imgs_dict.update({
-                        "train/input,gen,input_flow, gen_flow": torch.cat([reals, gout, real_flow, fake_flow], dim=3),
+                        "train/input-lb_gen-input_flow-gen_flow": torch.cat([inp, lb, \
+                                                    gout, real_flow, fake_flow], dim=3),
                     })
                 for tag, err in self.train_errors_dict.items():
                     self.writer.add_scalar(tag, err, self.train_iter)
@@ -116,8 +117,7 @@ class BaseModel():
         err_g_adv_s = []
         err_g_adv_t = []
         err_g_adv = []
-        err_g_con = []
-        err_g_pre = []
+        err_g_real = []
         err_g = []
         err_d = []
 
@@ -141,10 +141,10 @@ class BaseModel():
             for i, data in enumerate(pbar):
                 self.test_iter += 1
                 # set test data 
-                self.set_input(data) # get self.input, self.gt
+                self.set_input(data) # get self.input, self.lb, self.gt
                 # NetG
                 gout = self.netg(self.input) # Reconstract self.input
-                predict = predict_forg(self.input, gout)
+                predict = predict_forg(gout, self.input)
                 gt = self.gt.permute(0, 2, 3, 4, 1).cpu().numpy()
                 predicts.append(predict)
                 gts.append(gt)
@@ -161,9 +161,8 @@ class BaseModel():
                 err_g_adv_s.append(self.l_adv(s_feat_real, s_feat_fake).item())
                 err_g_adv_t.append(self.l_adv(t_feat_real, t_feat_fake).item())
                 err_g_adv.append(err_g_adv_s[-1] + err_g_adv_t[-1])
-                err_g_con.append(self.l_con(gout, self.input).item())
-                err_g_pre.append(self.l_bce(torch.from_numpy(predict).to(self.device), self.gt).item())
-                err_g.append(err_g_adv[-1] * self.args.w_adv + err_g_con[-1] * self.args.w_con + err_g_pre[-1] * self.args.w_pre)
+                err_g_real.append(self.l_real(gout, self.lb).item())
+                err_g.append(err_g_adv[-1] * self.args.w_adv + err_g_real[-1] * self.args.w_real)
                 # Calc err_d
                 err_d_real_s = self.l_bce(s_pred_real, self.real_label).item()
                 err_d_real_t = self.l_bce(t_pred_real, self.real_label).item()
@@ -176,7 +175,7 @@ class BaseModel():
                 # test video summary
                 self.test_imgs_dict.update({
                         'test/input_gout': torch.cat([self.input, gout], dim=3),
-                        'test/gt_predict': torch.cat([self.gt, torch.from_numpy(predict).to(self.device)], dim=3)
+                        'test/gt_predict': torch.cat([self.gt, torch.from_numpy(predict).permute(0, 4, 1, 2, 3).to(self.device)], dim=3)
                     })
                 for t, v in self.test_imgs_dict.items():
                     grid = [make_grid(f, nrow=self.args.batchsize, normalize=True) for f in v.permute(2, 0, 1, 3, 4)]
@@ -197,8 +196,7 @@ class BaseModel():
                         ('test/err_g_adv', np.mean(err_g_adv)),
                         ('test/err_g_adv_s', np.mean(err_g_adv_s)),
                         ('test/err_g_adv_t', np.mean(err_g_adv_t)),
-                        ('test/err_g_con', np.mean(err_g_con)),
-                        ('test/err_g_pre', np.mean(err_g_pre)),
+                        ('test/err_g_real', np.mean(err_g_real)),
                         })
 
             for tag, err in self.test_errors_dict.items():
@@ -271,15 +269,13 @@ class Ganomaly(BaseModel):
 
         #Loss function
         self.l_adv = l2_loss
-        self.l_con = nn.L1Loss()
-        self.l_enc = l2_loss
+        self.l_real = nn.L1Loss()
         self.l_bce = nn.BCELoss()
 
         #Initialize input tensors
         self.input = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
-        self.label = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
+        self.lb = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
         self.gt = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
-        self.fixed_input = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
         self.real_label = torch.ones(size=(self.args.batchsize,), 
                                             dtype=torch.float32, device=self.device)
         self.gout_label = torch.zeros(size=(self.args.batchsize,), 
@@ -293,7 +289,6 @@ class Ganomaly(BaseModel):
                                     lr= self.args.lr, betas=(self.args.beta1, 0.999))
             self.optimizer_g = optim.Adam(self.netg.parameters(), 
                                     lr= self.args.lr, betas=(self.args.beta1, 0.999))
-        
 
     def forward_g(self):
         self.gout = self.netg(self.input)
@@ -307,16 +302,12 @@ class Ganomaly(BaseModel):
                 = self.netd(self.gout.detach(), self.gout_flow.detach())
     
     def backward_g(self):
-        predict = predict_forg(self.input.detach(), self.gout.detach())
-        predict = torch.from_numpy(predict).to(self.device)
         self.err_g_adv_s = self.l_adv(self.s_feat_real, self.s_feat_fake)
         self.err_g_adv_t = self.l_adv(self.t_feat_real, self.t_feat_fake)
         self.err_g_adv = self.err_g_adv_s + self.err_g_adv_t
-        self.err_g_con = self.l_con(self.gout, self.input)
-        self.err_g_pre = self.l_bce(predict, self.gt)
+        self.err_g_real = self.l_real(self.gout, self.lb)
         self.err_g = self.err_g_adv * self.args.w_adv + \
-                    self.err_g_con * self.args.w_con + \
-                    self.err_g_pre * self.args.w_pre
+                    self.err_g_real * self.args.w_real
         self.err_g.backward(retain_graph=True)
 
     def backward_d(self):
