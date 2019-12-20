@@ -24,7 +24,7 @@ class MdfDataLoader(Dataset):
                                 ])
         
         # Set index
-        self.data_path_li, self.lb_path, self.mask_path_li= self.path_reader(self.paths) #video path list
+        self.data_path_li, self.lb_path_li, self.mask_path_li= self.path_reader(self.paths) #video path list
         nframe_li = self.count_frame(self.mask_path_li) #num of frame list
         div_nfr_li = [ i // self.nfr for i in nframe_li] #num of nfrsize list
         # div_nfr_li -> data index
@@ -57,17 +57,19 @@ class MdfDataLoader(Dataset):
         # read video data
         frsize_data = self.video_reader(self.data_path_li[video_id], ff)
 
-        if self.transforms:
-            frsize_data = self.transforms(frsize_data)
- 
         if "Fake" in self.data_path_li[video_id]:
             frsize_lb = self.video_reader(self.lb_path_li[video_id], ff)
             frsize_mask = self.video_reader(self.mask_path_li[video_id], ff, mask=True)
+            transdata = frsize_data + frsize_lb
             if self.transforms: 
-                frsize_lb = self.transforms(frsize_lb)
+                transdata = self.transforms(transdata)
                 frsize_mask = self.mask_transforms(frsize_mask)
+            frsize_data, frsize_lb = torch.split(transdata, self.nfr, dim=1)
+
         elif "Original" in self.data_path_li[video_id]:
             frsize_mask = torch.zeros((1, self.nfr, self.isize, self.isize))
+            if self.transforms:
+                frsize_data = self.transforms(frsize_data)
             frsize_lb = frsize_data
         
         return frsize_data*2-1, frsize_lb*2-1, frsize_mask

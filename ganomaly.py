@@ -95,7 +95,7 @@ class BaseModel():
                                 ('train/err_g_real', self.err_g_real.item()),
                                 })
                 self.train_imgs_dict.update({
-                        "train/input-lb_gen-input_flow-gen_flow": torch.cat([inp, lb, \
+                        "train/input-lb-gen-input_flow-gen_flow": torch.cat([inp, lb, \
                                                     gout, real_flow, fake_flow], dim=3),
                     })
                 for tag, err in self.train_errors_dict.items():
