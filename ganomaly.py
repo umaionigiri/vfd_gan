@@ -22,7 +22,7 @@ from utils import *
 
 class BaseModel():
     """
-    Base Model for ganomaly
+    Base Model for GAN
 
     """
 
@@ -77,6 +77,10 @@ class BaseModel():
 
             self.set_input(data)
             self.optimize_params()
+
+            if self.train_iter % self.test_freq == 0:
+                # -- TEST --
+                test_epoch_end()
             
             if self.train_iter % self.args.display_freq == 0:
                 # -- Update Summary on Tensorboard --
@@ -207,17 +211,15 @@ class BaseModel():
 
         best_auc = 0
         phase = self.args.phase
+        self.test_freq = self.args.batchsize * 10
+
         print(" >> Training model %s." % self.args.model)
 
         for self.epoch in range(self.args.ep):
-            if phase == 'train':
-                self.train_one_epoch()
-                phase = 'test'
-            if phase == 'test':
-                self.test_epoch_end()
-                if self.args.phase == 'train': phase = 'train'
-
+            self.train_one_epoch() #TRAIN
+            
             if self.epoch % self.args.save_weight_freq == 0:
+                # -- Save Weights of NetG and NetD --
                 torch.save({'epoch': self.epoch + 1, 'state_dict': self.netg.state_dict()},
                            '%s/ep%04d_netG.pth' % (self.weight_dir, self.epoch))
                 torch.save({'epoch': self.epoch + 1, 'state_dict': self.netd.state_dict()},
