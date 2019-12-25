@@ -80,12 +80,14 @@ class BaseModel():
 
             if self.train_iter % self.test_freq == 0:
                 # -- TEST --
-                test_epoch_end()
+                self.test_epoch_end()
             
             if self.train_iter % self.args.display_freq == 0:
                 # -- Update Summary on Tensorboard --
                 inp = self.input.data
                 lb = self.lb
+                gt = torch.zeros_like(inp)
+                gt = torch.cat([self.gt, self.gt, self.gt], dim=1)
                 gout = self.gout
                 real_flow = self.input_flow
                 fake_flow = self.gout_flow
@@ -99,7 +101,7 @@ class BaseModel():
                                 ('train/err_g_real', self.err_g_real.item()),
                                 })
                 self.train_imgs_dict.update({
-                        "train/input-lb-gen-input_flow-gen_flow": torch.cat([inp, lb, \
+                    "train/input-gt-lb-gen-input_flow-gen_flow": torch.cat([inp, gt, lb, \
                                                     gout, real_flow, fake_flow], dim=3),
                     })
                 for tag, err in self.train_errors_dict.items():
@@ -193,7 +195,7 @@ class BaseModel():
             auc = evaluate(gts, predicts, self.save_root_dir, metric=self.args.metric)
 
             # Update summary of loss ans auc
-            self.writer.add_scalar('auc', auc, self.epoch)
+            self.writer.add_scalar('auc', auc, self.test_iter)
             self.test_errors_dict.update({
                         ('test/err_d', np.mean(err_d)),
                         ('test/err_g', np.mean(err_g)),
@@ -204,7 +206,7 @@ class BaseModel():
                         })
 
             for tag, err in self.test_errors_dict.items():
-                self.writer.add_scalar(tag, err, self.epoch)
+                self.writer.add_scalar(tag, err, self.test_iter)
  
 
     def train(self):
@@ -271,7 +273,7 @@ class Ganomaly(BaseModel):
 
         #Loss function
         self.l_adv = l2_loss
-        self.l_real = nn.L1Loss()
+        self.l_real = l2_loss
         self.l_bce = nn.BCELoss()
 
         #Initialize input tensors
