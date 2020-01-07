@@ -45,8 +45,8 @@ class BaseModel():
         # make save root dir
         from datetime import datetime
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        comment = "b{}xd{}xwh{}_lr-{}_w-a{}r{}".format(args.batchsize, args.nfr, args.isize, 
-                                                    args.lr, args.w_adv, args.w_real)
+        comment = "b{}xd{}xwh{}_lr-{}_w-a{}c{}p{}".format(args.batchsize, args.nfr, args.isize, 
+                                                    args.lr, args.w_adv, args.w_con, args.w_pre)
         self.save_root_dir = os.path.join(args.result_root, args.model, comment, current_time)
         if not os.path.exists(self.save_root_dir): os.makedirs(self.save_root_dir)
         # make weights save dir
@@ -86,11 +86,11 @@ class BaseModel():
                 # -- Update Summary on Tensorboard --
                 inp = self.input.data
                 lb = self.lb
-                gt = torch.zeros_like(inp)
-                gt = torch.cat([self.gt, self.gt, self.gt], dim=1)
                 gout = self.gout
                 real_flow = self.input_flow
                 fake_flow = self.gout_flow
+                gt = self.gt
+                predict = self.predict
 
                 self.train_errors_dict.update({
                                 ('train/err_d', self.err_d.item()),
@@ -98,11 +98,13 @@ class BaseModel():
                                 ('train/err_g_adv', self.err_g_adv.item()),
                                 ('train/err_g_adv_s', self.err_g_adv_s.item()),
                                 ('train/err_g_adv_t', self.err_g_adv_t.item()),
-                                ('train/err_g_real', self.err_g_real.item()),
+                                ('train/err_g_con', self.err_g_con.item()),
+                                ('train/err_g_pre', self.err_g_pre.item()),
                                 })
                 self.train_imgs_dict.update({
-                    "train/input-gt-lb-gen-input_flow-gen_flow": torch.cat([inp, gt, lb, \
+                    "train/input-lb-gen-input_flow-gen_flow": torch.cat([inp, lb, \
                                                     gout, real_flow, fake_flow], dim=3),
+                    "train/gt-predict": torch.cat([gt, predict], dim=3),
                     })
                 for tag, err in self.train_errors_dict.items():
                     self.writer.add_scalar(tag, err, self.train_iter)
@@ -123,7 +125,8 @@ class BaseModel():
         err_g_adv_s = []
         err_g_adv_t = []
         err_g_adv = []
-        err_g_real = []
+        err_g_con = []
+        err_g_pre = []
         err_g = []
         err_d = []
 
@@ -149,11 +152,10 @@ class BaseModel():
                 # set test data 
                 self.set_input(data) # get self.input, self.lb, self.gt
                 # NetG
-                gout = self.netg(self.input) # Reconstract self.input
-                predict = predict_forg(gout, self.input)
-                gt = self.gt.permute(0, 2, 3, 4, 1).cpu().numpy()
-                predicts.append(predict)
-                gts.append(gt)
+                gout, predict = self.netg(self.input) # Reconstract self.input
+                #predict = predict_forg(gout, self.input)
+                gts.append(self.gt.permute(0, 2, 3, 4, 1).cpu().numpy())
+                predicts.append(predict.permute(0, 2, 3, 4, 1).cpu().numpy())
                 # NetD
                 # calc Optical Flow 
                 input_flow = video_to_flow(self.input.detach()).to(self.device)
@@ -167,8 +169,9 @@ class BaseModel():
                 err_g_adv_s.append(self.l_adv(s_feat_real, s_feat_fake).item())
                 err_g_adv_t.append(self.l_adv(t_feat_real, t_feat_fake).item())
                 err_g_adv.append(err_g_adv_s[-1] + err_g_adv_t[-1])
-                err_g_real.append(self.l_real(gout, self.lb).item())
-                err_g.append(err_g_adv[-1] * self.args.w_adv + err_g_real[-1] * self.args.w_real)
+                err_g_con.append(self.l_con(gout, self.input).item())
+                err_g_pre.append(self.l_pre(predict, self.gt).item())
+                err_g.append(err_g_adv[-1] * self.args.w_adv + err_g_con[-1] * self.args.w_con + err_g_pre[-1] * self.args.w_pre)
                 # Calc err_d
                 err_d_real_s = self.l_bce(s_pred_real, self.real_label).item()
                 err_d_real_t = self.l_bce(t_pred_real, self.real_label).item()
@@ -181,7 +184,7 @@ class BaseModel():
                 # test video summary
                 self.test_imgs_dict.update({
                         'test/input_gout': torch.cat([self.input, gout], dim=3),
-                        'test/gt_predict': torch.cat([self.gt, torch.from_numpy(predict).permute(0, 4, 1, 2, 3).to(self.device)], dim=3)
+                        'test/gt_predict': torch.cat([self.gt, predict], dim=3)
                     })
                 for t, v in self.test_imgs_dict.items():
                     grid = [make_grid(f, nrow=self.args.batchsize, normalize=True) for f in v.permute(2, 0, 1, 3, 4)]
@@ -202,7 +205,8 @@ class BaseModel():
                         ('test/err_g_adv', np.mean(err_g_adv)),
                         ('test/err_g_adv_s', np.mean(err_g_adv_s)),
                         ('test/err_g_adv_t', np.mean(err_g_adv_t)),
-                        ('test/err_g_real', np.mean(err_g_real)),
+                        ('test/err_g_con', np.mean(err_g_con)),
+                        ('test/err_g_pre', np.mean(err_g_pre)),
                         })
 
             for tag, err in self.test_errors_dict.items():
@@ -273,7 +277,8 @@ class Ganomaly(BaseModel):
 
         #Loss function
         self.l_adv = l2_loss
-        self.l_real = l2_loss
+        self.l_con = l2_loss
+        self.l_pre = nn.BCELoss()
         self.l_bce = nn.BCELoss()
 
         #Initialize input tensors
@@ -295,7 +300,7 @@ class Ganomaly(BaseModel):
                                     lr= self.args.lr, betas=(self.args.beta1, 0.999))
 
     def forward_g(self):
-        self.gout = self.netg(self.input)
+        self.gout, self.predict = self.netg(self.input)
 
     def forward_d(self):
         self.input_flow = video_to_flow(self.input).to(self.device)
@@ -309,9 +314,11 @@ class Ganomaly(BaseModel):
         self.err_g_adv_s = self.l_adv(self.s_feat_real, self.s_feat_fake)
         self.err_g_adv_t = self.l_adv(self.t_feat_real, self.t_feat_fake)
         self.err_g_adv = self.err_g_adv_s + self.err_g_adv_t
-        self.err_g_real = self.l_real(self.gout, self.lb)
+        self.err_g_con = self.l_con(self.gout, self.input)
+        self.err_g_pre = self.l_pre(self.predict, self.gt)
         self.err_g = self.err_g_adv * self.args.w_adv + \
-                    self.err_g_real * self.args.w_real
+                    self.err_g_con * self.args.w_con + \
+                    self.err_g_pre * self.args.w_pre
         self.err_g.backward(retain_graph=True)
 
     def backward_d(self):

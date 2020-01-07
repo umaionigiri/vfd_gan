@@ -42,13 +42,14 @@ class NetG(nn.Module):
         self.uconv4 = NetgConv(ngf*8+ngf*8, ngf*8)
         self.uconv3 = NetgConv(ngf*8+ngf*4, ngf*4)
         self.uconv2 = NetgConv(ngf*4+ngf*2, ngf*2)
-        self.uconv1 = NetgConv(ngf*2+ngf, ngf)
+        self.uconv1 = NetgConv(ngf*2+ngf, nc)
         
         self.dropout = nn.Dropout(p=0.25)
         self.upsamp = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
 
-        self.conv_last = nn.Conv3d(ngf, nc, 3, stride=1, padding=1, bias=False)
+        self.conv_last = nn.Conv3d(nc, 1, 3, stride=1, padding=1, bias=False)
         self.tanh = nn.Tanh()
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
 
@@ -90,12 +91,11 @@ class NetG(nn.Module):
         x = self.upsamp(x)
         # (16, 64)
         x = torch.cat([x, dconv1], dim=1)
-        x = self.uconv1(x)
+        gen_vi = self.uconv1(x)
 
-        x = self.conv_last(x)
-        gen_vi = self.tanh(x)
+        predict = self.conv_last(gen_vi)
 
-        return gen_vi
+        return self.tanh(gen_vi), self.sigmoid(predict)
         
 
 class NetdConv(nn.Module):

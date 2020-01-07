@@ -114,11 +114,12 @@ class DataLoader(object):
 
         # set transforms
         train_transforms = video_transforms.Compose([
-                            video_transforms.Resize((int(self.isize*1.1),int(self.isize*1.1))),
-                            video_transforms.RandomRotation(10),
-                            video_transforms.RandomCrop((self.args.isize, self.args.isize)),
-                            video_transforms.RandomHorizontalFlip(),
+                            #video_transforms.Resize((int(self.isize*1.1),int(self.isize*1.1))),
+                            #video_transforms.RandomRotation(10),
+                            #video_transforms.RandomCrop((self.args.isize, self.args.isize)),
+                            #video_transforms.RandomHorizontalFlip(),
                             #video_transforms.ColorJitter(),
+                            video_transforms.Resize((self.isize, self.isize)),
                             volume_transforms.ClipToTensor()
                             ])
         test_transforms = video_transforms.Compose([
