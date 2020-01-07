@@ -38,11 +38,19 @@ class NetG(nn.Module):
 
         self.maxpool = nn.MaxPool3d(2)
         
+        """
         self.uconv5 = NetgConv(ngf*16, ngf*8)
         self.uconv4 = NetgConv(ngf*8+ngf*8, ngf*8)
         self.uconv3 = NetgConv(ngf*8+ngf*4, ngf*4)
         self.uconv2 = NetgConv(ngf*4+ngf*2, ngf*2)
         self.uconv1 = NetgConv(ngf*2+ngf, nc)
+        """
+        
+        self.uconv5 = NetgConv(ngf*16, ngf*8)
+        self.uconv4 = NetgConv(ngf*8, ngf*4)
+        self.uconv3 = NetgConv(ngf*4, ngf*2)
+        self.uconv2 = NetgConv(ngf*2, ngf)
+        self.uconv1 = NetgConv(ngf, nc)
         
         self.dropout = nn.Dropout(p=0.25)
         self.upsamp = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
@@ -75,22 +83,22 @@ class NetG(nn.Module):
         x = self.dropout(x)
         x = self.upsamp(x) # ngf*8
         # (4, 8)
-        x = torch.cat([x, dconv4], dim=1) # ngf*8*2
+        #x = torch.cat([x, dconv4], dim=1) # ngf*8*2
         x = self.uconv4(x) # ngf*8
         x = self.dropout(x)
         x = self.upsamp(x)
         # (4, 16)
-        x = torch.cat([x, dconv3], dim=1) #ngf*8+ngf*4
+        #x = torch.cat([x, dconv3], dim=1) #ngf*8+ngf*4
         x = self.uconv3(x)
         x = self.dropout(x)
         x = self.upsamp(x)
         # (8, 32)
-        x = torch.cat([x, dconv2], dim=1)
+        #x = torch.cat([x, dconv2], dim=1)
         x = self.uconv2(x)
         x = self.dropout(x)
         x = self.upsamp(x)
         # (16, 64)
-        x = torch.cat([x, dconv1], dim=1)
+        #x = torch.cat([x, dconv1], dim=1)
         gen_vi = self.uconv1(x)
 
         predict = self.conv_last(gen_vi)

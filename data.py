@@ -60,11 +60,10 @@ class MdfDataLoader(Dataset):
         if "Fake" in self.data_path_li[video_id]:
             frsize_lb = self.video_reader(self.lb_path_li[video_id], ff)
             frsize_mask = self.video_reader(self.mask_path_li[video_id], ff, mask=True)
-            transdata = frsize_data + frsize_lb
+            transdata = frsize_data + frsize_lb + frsize_mask
             if self.transforms: 
                 transdata = self.transforms(transdata)
-                frsize_mask = self.mask_transforms(frsize_mask)
-            frsize_data, frsize_lb = torch.split(transdata, self.nfr, dim=1)
+            frsize_data, frsize_lb, frsize_mask = torch.split(transdata, self.nfr, dim=1)
 
         elif "Original" in self.data_path_li[video_id]:
             frsize_mask = torch.zeros((1, self.nfr, self.isize, self.isize))
@@ -72,7 +71,7 @@ class MdfDataLoader(Dataset):
                 frsize_data = self.transforms(frsize_data)
             frsize_lb = frsize_data
         
-        return frsize_data*2-1, frsize_lb*2-1, frsize_mask
+        return frsize_data*2-1, frsize_lb*2-1, frsize_mask[0].unsqueeze(0)
 
     def __len__(self):
         return self.total_div_nfr[-1]
@@ -96,6 +95,7 @@ class MdfDataLoader(Dataset):
             if mask == True:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 frame = cv2.bitwise_not(frame)
+                frame = cv2.merge([frame, frame, frame])
             else:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame = Image.fromarray(np.uint8(frame)) 

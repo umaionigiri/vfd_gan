@@ -99,7 +99,7 @@ class BaseModel():
                                 ('train/err_g_adv_s', self.err_g_adv_s.item()),
                                 ('train/err_g_adv_t', self.err_g_adv_t.item()),
                                 ('train/err_g_con', self.err_g_con.item()),
-                                ('train/err_g_pre', self.err_g_pre.item()),
+                                #('train/err_g_pre', self.err_g_pre.item()),
                                 })
                 self.train_imgs_dict.update({
                     "train/input-lb-gen-input_flow-gen_flow": torch.cat([inp, lb, \
@@ -315,10 +315,10 @@ class Ganomaly(BaseModel):
         self.err_g_adv_t = self.l_adv(self.t_feat_real, self.t_feat_fake)
         self.err_g_adv = self.err_g_adv_s + self.err_g_adv_t
         self.err_g_con = self.l_con(self.gout, self.input)
-        self.err_g_pre = self.l_pre(self.predict, self.gt)
+        #self.err_g_pre = self.l_pre(self.predict, self.gt)
         self.err_g = self.err_g_adv * self.args.w_adv + \
-                    self.err_g_con * self.args.w_con + \
-                    self.err_g_pre * self.args.w_pre
+                    self.err_g_con * self.args.w_con 
+                    #self.err_g_pre * self.args.w_pre
         self.err_g.backward(retain_graph=True)
 
     def backward_d(self):
