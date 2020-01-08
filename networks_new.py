@@ -37,21 +37,21 @@ class NetG(nn.Module):
         self.dconv5 = NetgConv(ngf*8, ngf*16)
 
         self.maxpool = nn.MaxPool3d(2)
+        self.avgpool = nn.AvgPool3d(2)
         
-        """
         self.uconv5 = NetgConv(ngf*16, ngf*8)
         self.uconv4 = NetgConv(ngf*8+ngf*8, ngf*8)
         self.uconv3 = NetgConv(ngf*8+ngf*4, ngf*4)
         self.uconv2 = NetgConv(ngf*4+ngf*2, ngf*2)
         self.uconv1 = NetgConv(ngf*2+ngf, nc)
-        """
         
+        """
         self.uconv5 = NetgConv(ngf*16, ngf*8)
         self.uconv4 = NetgConv(ngf*8, ngf*4)
         self.uconv3 = NetgConv(ngf*4, ngf*2)
         self.uconv2 = NetgConv(ngf*2, ngf)
         self.uconv1 = NetgConv(ngf, nc)
-        
+        """
         self.dropout = nn.Dropout(p=0.25)
         self.upsamp = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
 
@@ -64,16 +64,16 @@ class NetG(nn.Module):
         # Encode 1
         # (32, 128)
         dconv1 = self.dconv1(x) # ngf
-        x = self.maxpool(dconv1)
+        x = self.avgpool(dconv1)
         # (16, 64)
         dconv2 = self.dconv2(x) # ngf*2
-        x = self.maxpool(dconv2)
+        x = self.avgpool(dconv2)
         # (8, 32)
         dconv3 = self.dconv3(x) # ngf*4
-        x = self.maxpool(dconv3)
+        x = self.avgpool(dconv3)
         # (4, 16)
         dconv4 = self.dconv4(x) # ngf*8
-        x = self.maxpool(dconv4)
+        x = self.avgpool(dconv4)
         # (2, 8)
 
         latent_i = self.dconv5(x) # ngf*16
@@ -83,22 +83,22 @@ class NetG(nn.Module):
         x = self.dropout(x)
         x = self.upsamp(x) # ngf*8
         # (4, 8)
-        #x = torch.cat([x, dconv4], dim=1) # ngf*8*2
+        x = torch.cat([x, dconv4], dim=1) # ngf*8*2
         x = self.uconv4(x) # ngf*8
         x = self.dropout(x)
         x = self.upsamp(x)
         # (4, 16)
-        #x = torch.cat([x, dconv3], dim=1) #ngf*8+ngf*4
+        x = torch.cat([x, dconv3], dim=1) #ngf*8+ngf*4
         x = self.uconv3(x)
         x = self.dropout(x)
         x = self.upsamp(x)
         # (8, 32)
-        #x = torch.cat([x, dconv2], dim=1)
+        x = torch.cat([x, dconv2], dim=1)
         x = self.uconv2(x)
         x = self.dropout(x)
         x = self.upsamp(x)
         # (16, 64)
-        #x = torch.cat([x, dconv1], dim=1)
+        x = torch.cat([x, dconv1], dim=1)
         gen_vi = self.uconv1(x)
 
         predict = self.conv_last(gen_vi)
@@ -126,13 +126,13 @@ class SDisc(nn.Module):
         super(SDisc, self).__init__()
 
         # input size == (B, C, D, H, W)
-        netgconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
-        self.dconv1 = netgconv(nc, ndf)
-        self.dconv2 = netgconv(ndf, ndf*2)
-        self.dconv3 = netgconv(ndf*2, ndf*4)
-        self.dconv4 = netgconv(ndf*4, ndf*8)
-        self.dconv5 = netgconv(ndf*8, ndf*16)
-        self.dconv6 = netgconv(ndf*16, ndf*32)
+        netdconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
+        self.dconv1 = netdconv(nc, ndf)
+        self.dconv2 = netdconv(ndf, ndf*2)
+        self.dconv3 = netdconv(ndf*2, ndf*4)
+        self.dconv4 = netdconv(ndf*4, ndf*8)
+        self.dconv5 = netdconv(ndf*8, ndf*16)
+        self.dconv6 = netdconv(ndf*16, ndf*32)
 
         self.maxpool = nn.MaxPool3d((1, 2, 2)) 
         self.gpool = nn.AvgPool3d((nfr, 1, 1), stride=1)
@@ -171,10 +171,10 @@ class TDisc(nn.Module):
         super(TDisc, self).__init__()
 
         # input size == (B, C, D, H, W)
-        netgconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
-        self.dconv1 = netgconv(nc, ndf)
-        self.dconv2 = netgconv(ndf, ndf*2)
-        self.dconv3 = netgconv(ndf*2, ndf*4)
+        netdconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
+        self.dconv1 = netdconv(nc, ndf)
+        self.dconv2 = netdconv(ndf, ndf*2)
+        self.dconv3 = netdconv(ndf*2, ndf*4)
 
         self.maxpool = nn.MaxPool3d((2, 1, 1)) 
         self.gpool = nn.AvgPool3d((1, isize, isize), stride=1)
