@@ -35,9 +35,9 @@ class Args():
         self.parser.add_argument('--w_pre', default=50, type=float, help='reconstruction loss weight')
         self.parser.add_argument('--display_freq', default=1, type=int, 
                                 help='frequency of showing training results on tensorboard')
-        self.parser.add_argument('--save_weight_freq', default=10, type=int, 
+        self.parser.add_argument('--save_weight_freq', default=1, type=int, 
                                 help='frequency of saving weights')
-        self.parser.add_argument('--test_freq', default=50, type=int, 
+        self.parser.add_argument('--test_freq', default=200, type=int, 
                                 help='frequency of test')
 
 
