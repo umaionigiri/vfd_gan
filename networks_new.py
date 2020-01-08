@@ -56,16 +56,16 @@ class NetG(nn.Module):
         # Encode 1
         # (32, 128)
         dconv1 = self.dconv1(x) # ngf
-        x = self.maxpool(dconv1)
+        x = self.avepool(dconv1)
         # (16, 64)
         dconv2 = self.dconv2(x) # ngf*2
-        x = self.maxpool(dconv2)
+        x = self.avepool(dconv2)
         # (8, 32)
         dconv3 = self.dconv3(x) # ngf*4
-        x = self.maxpool(dconv3)
+        x = self.avepool(dconv3)
         # (4, 16)
         dconv4 = self.dconv4(x) # ngf*8
-        x = self.maxpool(dconv4)
+        x = self.avepool(dconv4)
         # (2, 8)
 
         latent_i = self.dconv5(x) # ngf*16
@@ -118,13 +118,13 @@ class SDisc(nn.Module):
         super(SDisc, self).__init__()
 
         # input size == (B, C, D, H, W)
-        netgconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
-        self.dconv1 = netgconv(nc, ndf)
-        self.dconv2 = netgconv(ndf, ndf*2)
-        self.dconv3 = netgconv(ndf*2, ndf*4)
-        self.dconv4 = netgconv(ndf*4, ndf*8)
-        self.dconv5 = netgconv(ndf*8, ndf*16)
-        self.dconv6 = netgconv(ndf*16, ndf*32)
+        netdconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
+        self.dconv1 = netdconv(nc, ndf)
+        self.dconv2 = netdconv(ndf, ndf*2)
+        self.dconv3 = netdconv(ndf*2, ndf*4)
+        self.dconv4 = netdconv(ndf*4, ndf*8)
+        self.dconv5 = netdconv(ndf*8, ndf*16)
+        self.dconv6 = netdconv(ndf*16, ndf*32)
 
         self.maxpool = nn.MaxPool3d((1, 2, 2)) 
         self.gpool = nn.AvgPool3d((nfr, 1, 1), stride=1)
@@ -163,10 +163,10 @@ class TDisc(nn.Module):
         super(TDisc, self).__init__()
 
         # input size == (B, C, D, H, W)
-        netgconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
-        self.dconv1 = netgconv(nc, ndf)
-        self.dconv2 = netgconv(ndf, ndf*2)
-        self.dconv3 = netgconv(ndf*2, ndf*4)
+        netdconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
+        self.dconv1 = netdconv(nc, ndf)
+        self.dconv2 = netdconv(ndf, ndf*2)
+        self.dconv3 = netdconv(ndf*2, ndf*4)
 
         self.maxpool = nn.MaxPool3d((2, 1, 1)) 
         self.gpool = nn.AvgPool3d((1, isize, isize), stride=1)
@@ -198,7 +198,7 @@ class NetD(nn.Module):
     def __init__(self, args):
         super(NetD, self).__init__()
 
-        self.spatdisc = SDisc(args.ich, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
+        self.spatdisc = SDisc(args.ich, args.nfr, kernel=(1, 5, 5), padding=(0, 1, 1))
         self.tempdisc = TDisc(args.ich, args.isize, kernel=(3, 1, 1), padding=(1, 0, 0))
 
     def forward(self, x, y):
