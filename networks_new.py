@@ -56,16 +56,16 @@ class NetG(nn.Module):
         # Encode 1
         # (32, 128)
         dconv1 = self.dconv1(x) # ngf
-        x = self.avepool(dconv1)
+        x = self.maxpool(dconv1)
         # (16, 64)
         dconv2 = self.dconv2(x) # ngf*2
-        x = self.avepool(dconv2)
+        x = self.maxpool(dconv2)
         # (8, 32)
         dconv3 = self.dconv3(x) # ngf*4
-        x = self.avepool(dconv3)
+        x = self.maxpool(dconv3)
         # (4, 16)
         dconv4 = self.dconv4(x) # ngf*8
-        x = self.avepool(dconv4)
+        x = self.maxpool(dconv4)
         # (2, 8)
 
         latent_i = self.dconv5(x) # ngf*16
@@ -198,8 +198,9 @@ class NetD(nn.Module):
     def __init__(self, args):
         super(NetD, self).__init__()
 
-        self.spatdisc = SDisc(args.ich, args.nfr, kernel=(1, 5, 5), padding=(0, 1, 1))
-        self.tempdisc = TDisc(args.ich, args.isize, kernel=(3, 1, 1), padding=(1, 0, 0))
+        self.spatdisc = SDisc(args.ich, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
+        #self.tempdisc = TDisc(args.ich, args.isize, kernel=(3, 1, 1), padding=(1, 0, 0))
+        self.tempdisc = SDisc(args.ich, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
 
     def forward(self, x, y):
 

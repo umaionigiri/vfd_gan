@@ -37,6 +37,8 @@ class BaseModel():
         self.test_imgs_dict = OrderedDict()
         self.train_errors_dict = OrderedDict()
         self.test_errors_dict = OrderedDict()
+        self.train_hist_dict = OrderedDict()
+        self.test_hist_dict = OrderedDict()
         self.auc_dict = OrderedDict()
         
         # set using gpu
@@ -106,12 +108,18 @@ class BaseModel():
                                                     gout, real_flow, fake_flow], dim=3),
                     "train/gt-predict": torch.cat([gt, predict], dim=3),
                     })
+                self.train_hist_dict.update({
+                    "train/gt": gt,
+                    "train/predict": predict
+                    })
                 for tag, err in self.train_errors_dict.items():
                     self.writer.add_scalar(tag, err, self.train_iter)
                 for tag, v in self.train_imgs_dict.items():
                     grid = [make_grid(f, nrow=self.args.batchsize, normalize=True) 
                             for f in v.permute(2, 0, 1, 3, 4)]
                     self.writer.add_video(tag, torch.unsqueeze(torch.stack(grid), 0), self.train_iter)
+                for tag, h in self.train_hist_dict.items():
+                    self.writer.add_histogram(tag, h, self.train_iter)
 
             pbar.set_postfix(OrderedDict(loss="{:.4f}".format(self.err_g)))
             pbar.set_description("[TRAIN Epoch %d/%d]" % (self.epoch+1, self.args.ep))
@@ -153,6 +161,7 @@ class BaseModel():
                 self.set_input(data) # get self.input, self.lb, self.gt
                 # NetG
                 gout, predict = self.netg(self.input) # Reconstract self.input
+                _gout, _predict = self.netg(self.lb) # Reconstract self.input
                 #predict = predict_forg(gout, self.input)
                 gts.append(self.gt.permute(0, 2, 3, 4, 1).cpu().numpy())
                 predicts.append(predict.permute(0, 2, 3, 4, 1).cpu().numpy())
@@ -169,7 +178,7 @@ class BaseModel():
                 err_g_adv_s.append(self.l_adv(s_feat_real, s_feat_fake).item())
                 err_g_adv_t.append(self.l_adv(t_feat_real, t_feat_fake).item())
                 err_g_adv.append(err_g_adv_s[-1] + err_g_adv_t[-1])
-                err_g_con.append(self.l_con(gout, self.input).item())
+                err_g_con.append(self.l_con(gout, self.lb).item())
                 err_g_pre.append(self.l_pre(predict, self.gt).item())
                 err_g.append(err_g_adv[-1] * self.args.w_adv + err_g_con[-1] * self.args.w_con + err_g_pre[-1] * self.args.w_pre)
                 # Calc err_d
@@ -186,10 +195,19 @@ class BaseModel():
                         'test/input_gout': torch.cat([self.input, gout], dim=3),
                         'test/gt_predict': torch.cat([self.gt, predict], dim=3)
                     })
+
+                self.test_hist_dict.update({
+                    "test/gt": self.gt,
+                    "test/original": _predict
+                    "test/predict": predict
+                    })
+                
                 for t, v in self.test_imgs_dict.items():
                     grid = [make_grid(f, nrow=self.args.batchsize, normalize=True) for f in v.permute(2, 0, 1, 3, 4)]
                     self.writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), self.test_iter)
- 
+                for t, h in self.test_hist_dict.item():
+                    self.writer.add_histogram(tag, h, self.train_iter)
+
                 pbar.set_description("[TEST  Epoch %d/%d]" % (self.epoch+1, self.args.ep))
 
             # AUC
@@ -217,7 +235,7 @@ class BaseModel():
 
         best_auc = 0
         phase = self.args.phase
-        self.test_freq = self.args.batchsize * 10
+        self.test_freq = 200
 
         print(" >> Training model %s." % self.args.model)
 
@@ -267,11 +285,11 @@ class Ganomaly(BaseModel):
         #pre-trained network load
         if self.args.resume != '' :
             print("\n Loading pre-trained networks.")
-            self.args.iter = torch.load(os.path.join(self.resume, 'netG.pth'))['epoch']
+            #self.args.iter = torch.load(self.args.resume)['epoch']
             self.netg.load_state_dict(torch.load(os.path.join(self.args.resume, \
-                                                            'netG.pth'))['state_dict'])
+                                                            'ep0001_netG.pth'))['state_dict'])
             self.netd.load_state_dict(torch.load(os.path.join(self.args.resume, 
-                                                            'netD.pth'))['state_dict'])
+                                                            'ep0001_netD.pth'))['state_dict'])
             print("\t Done. \n")
 
 
@@ -314,11 +332,11 @@ class Ganomaly(BaseModel):
         self.err_g_adv_s = self.l_adv(self.s_feat_real, self.s_feat_fake)
         self.err_g_adv_t = self.l_adv(self.t_feat_real, self.t_feat_fake)
         self.err_g_adv = self.err_g_adv_s + self.err_g_adv_t
-        self.err_g_con = self.l_con(self.gout, self.input)
+        self.err_g_con = self.l_con(self.gout, self.lb)
         self.err_g_pre = self.l_pre(self.predict, self.gt)
         self.err_g = self.err_g_adv * self.args.w_adv + \
-                    self.err_g_con * self.args.w_con + \
-                    self.err_g_pre * self.args.w_pre
+                     self.err_g_con * self.args.w_con + \
+                     self.err_g_pre * self.args.w_pre
         self.err_g.backward(retain_graph=True)
 
     def backward_d(self):

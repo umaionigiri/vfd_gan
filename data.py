@@ -90,6 +90,7 @@ class MdfDataLoader(Dataset):
         data = []
         cap = cv2.VideoCapture(video_path)
         cap.set(cv2.CAP_PROP_POS_FRAMES, ff)
+        print("video == {}".format(video_path))
         
         for i in range(self.nfr):
             ret, frame = cap.read()
