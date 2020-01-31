@@ -17,6 +17,7 @@ scikit-image = "*"
 torch = "*"
 torchvision = "*"
 tensorflow-gpu = "==1.14.0"
+csv = "*"
 
 [requires]
 python_version = "3.6"

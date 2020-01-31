@@ -7,22 +7,23 @@ from args import Args
 def main(args):
     
 
-    #dataloader
+    # -- DATA LOAD --
     from data import DataLoader
     dataloader = DataLoader(args)
     dataloader = dataloader.load_data()
 
-    #model
-    if args.model == 'xcp':
-        from xception import xception
-        model = Xception(agrs)
-        model.train(args, dataloader)
-               
-    elif args.model == 'ganbase':
+    # -- MODEL LOAD --
+    print("--Load model--")
+    # proposed model
+    if args.model == 'ganbase':
         from ganomaly import Ganomaly
-        print("--Load model--")
         model = Ganomaly(args, dataloader)
-        model.train()
+    # comparision model
+    else:
+        from models import Comparision
+        model = Comparision(args, dataloader)
+
+    model.train()
         
 
 if __name__ == '__main__':

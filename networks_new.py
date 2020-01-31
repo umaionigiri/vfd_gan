@@ -3,13 +3,6 @@ from torchvision.transforms import ToPILImage, ToTensor
 import torch
 import torch.nn as nn
 
-def weights_init(m):
-    if isinstance(m, nn.Conv3d):
-        m.weight.data.normal_(0.0, 0.02)
-    elif isinstance(m, nn.BatchNorm3d):
-        m.weight.data.normal_(1.0, 0.02)
-        m.bias.data.fill_(0)
-    
 
 class NetgConv(nn.Module):
     def __init__(self, in_fi, out_fi):
@@ -36,18 +29,18 @@ class NetG(nn.Module):
         self.dconv4 = NetgConv(ngf*4, ngf*8)
         self.dconv5 = NetgConv(ngf*8, ngf*16)
 
-        self.maxpool = nn.MaxPool3d(2)
+        self.avgpool = nn.AvgPool3d(2)
         
         self.uconv5 = NetgConv(ngf*16, ngf*8)
         self.uconv4 = NetgConv(ngf*8+ngf*8, ngf*8)
         self.uconv3 = NetgConv(ngf*8+ngf*4, ngf*4)
         self.uconv2 = NetgConv(ngf*4+ngf*2, ngf*2)
-        self.uconv1 = NetgConv(ngf*2+ngf, nc)
+        self.uconv1 = NetgConv(ngf*2+ngf, ngf)
         
         self.dropout = nn.Dropout(p=0.25)
         self.upsamp = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
 
-        self.conv_last = nn.Conv3d(nc, 1, 3, stride=1, padding=1, bias=False)
+        self.conv_last = nn.Conv3d(ngf, 1, 3, stride=1, padding=1, bias=False)
         self.tanh = nn.Tanh()
         self.sigmoid = nn.Sigmoid()
 
@@ -56,16 +49,16 @@ class NetG(nn.Module):
         # Encode 1
         # (32, 128)
         dconv1 = self.dconv1(x) # ngf
-        x = self.maxpool(dconv1)
+        x = self.avgpool(dconv1)
         # (16, 64)
         dconv2 = self.dconv2(x) # ngf*2
-        x = self.maxpool(dconv2)
+        x = self.avgpool(dconv2)
         # (8, 32)
         dconv3 = self.dconv3(x) # ngf*4
-        x = self.maxpool(dconv3)
+        x = self.avgpool(dconv3)
         # (4, 16)
         dconv4 = self.dconv4(x) # ngf*8
-        x = self.maxpool(dconv4)
+        x = self.avgpool(dconv4)
         # (2, 8)
 
         latent_i = self.dconv5(x) # ngf*16
@@ -91,11 +84,12 @@ class NetG(nn.Module):
         x = self.upsamp(x)
         # (16, 64)
         x = torch.cat([x, dconv1], dim=1)
-        gen_vi = self.uconv1(x)
+        x = self.uconv1(x)
 
-        predict = self.conv_last(gen_vi)
+        predict = self.conv_last(x)
+        predict = self.sigmoid(predict)
 
-        return self.tanh(gen_vi), self.sigmoid(predict)
+        return predict
         
 
 class NetdConv(nn.Module):
@@ -126,7 +120,7 @@ class SDisc(nn.Module):
         self.dconv5 = netdconv(ndf*8, ndf*16)
         self.dconv6 = netdconv(ndf*16, ndf*32)
 
-        self.maxpool = nn.MaxPool3d((1, 2, 2)) 
+        self.avgpool = nn.AvgPool3d((1, 2, 2)) 
         self.gpool = nn.AvgPool3d((nfr, 1, 1), stride=1)
         self.linear = nn.Linear(ndf*32*2*2, 1)
         self.sigmoid = nn.Sigmoid()
@@ -135,22 +129,22 @@ class SDisc(nn.Module):
     def forward(self, x):
         # (32, 128)
         x = self.dconv1(x)
-        x = self.maxpool(x)
+        x = self.avgpool(x)
         # (32, 64)
         x = self.dconv2(x)
-        x = self.maxpool(x)
+        x = self.avgpool(x)
         # (32, 32)
         x = self.dconv3(x)
-        x = self.maxpool(x)
+        x = self.avgpool(x)
         # (32, 16)
         x = self.dconv4(x)
-        x = self.maxpool(x)
+        x = self.avgpool(x)
         # (32, 8)
         x = self.dconv5(x)
-        x = self.maxpool(x)
+        x = self.avgpool(x)
         # (32, 4)
         x = self.dconv6(x)
-        features = self.maxpool(x)
+        features = self.avgpool(x)
         # (32, 2)
         x = self.gpool(features) # nfr -> 1
         x = self.linear(x.view(x.shape[0], -1))
@@ -168,7 +162,7 @@ class TDisc(nn.Module):
         self.dconv2 = netdconv(ndf, ndf*2)
         self.dconv3 = netdconv(ndf*2, ndf*4)
 
-        self.maxpool = nn.MaxPool3d((2, 1, 1)) 
+        self.avgpool = nn.AvgPool3d((2, 1, 1)) 
         self.gpool = nn.AvgPool3d((1, isize, isize), stride=1)
         self.linear = nn.Linear(ndf*4*2, 1)
         self.sigmoid = nn.Sigmoid()
@@ -177,13 +171,13 @@ class TDisc(nn.Module):
     def forward(self, x):
         # (16, 128)
         x = self.dconv1(x)
-        x = self.maxpool(x)
+        x = self.avgpool(x)
         # (8, 128)
         x = self.dconv2(x)
-        x = self.maxpool(x)
+        x = self.avgpool(x)
         # (4, 32)
         x = self.dconv3(x)
-        features = self.maxpool(x)
+        features = self.avgpool(x)
         # (2, 16)
 
         x = self.gpool(features) # isize -> 1
@@ -198,9 +192,9 @@ class NetD(nn.Module):
     def __init__(self, args):
         super(NetD, self).__init__()
 
-        self.spatdisc = SDisc(args.ich, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
+        self.spatdisc = SDisc(3, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
         #self.tempdisc = TDisc(args.ich, args.isize, kernel=(3, 1, 1), padding=(1, 0, 0))
-        self.tempdisc = SDisc(args.ich, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
+        self.tempdisc = SDisc(3, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
 
     def forward(self, x, y):
 
