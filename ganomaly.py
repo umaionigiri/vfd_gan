@@ -1,406 +1,519 @@
+"""GANomaly
+"""
+# pylint: disable=C0301,E1101,W0622,C0103,R0902,R0915
 
-import os
-from tqdm import tqdm
-import numpy as np
-import json
-import cv2
-
+##
 from collections import OrderedDict
+import os
+import time
+import numpy as np
+from tqdm import tqdm
+
 from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn as nn
 import torch.utils.data
-from torchvision.utils import save_image, make_grid
-from torch.utils.tensorboard import SummaryWriter
-import torchvision
-import torch.backends.cudnn as cudnn
+import torchvision.utils as vutils
 
-from evaluate import evaluate
-from networks_new import NetG, NetD
-from utils import *
+from lib.networks import NetG, NetD, weights_init
+from lib.visualizer import Visualizer
+from lib.loss import l2_loss
+from lib.evaluate import evaluate
+
+
+class Encoder(nn.Module):
+    """
+    DCGAN ENCODER NETWORK
+    """
+
+    def __init__(self, isize, nz, nc, ndf, ngpu, n_extra_layers=0, add_final_conv=True):
+        super(Encoder, self).__init__()
+        self.ngpu = ngpu
+        assert isize % 16 == 0, "isize has to be a multiple of 16"
+
+        main = nn.Sequential()
+        # input is nc x isize x isize
+        main.add_module('initial-conv-{0}-{1}'.format(nc, ndf),
+                        nn.Conv2d(nc, ndf, 4, 2, 1, bias=False))
+        main.add_module('initial-relu-{0}'.format(ndf),
+                        nn.LeakyReLU(0.2, inplace=True))
+        csize, cndf = isize / 2, ndf
+
+        # Extra layers
+        for t in range(n_extra_layers):
+            main.add_module('extra-layers-{0}-{1}-conv'.format(t, cndf),
+                            nn.Conv2d(cndf, cndf, 3, 1, 1, bias=False))
+            main.add_module('extra-layers-{0}-{1}-batchnorm'.format(t, cndf),
+                            nn.BatchNorm2d(cndf))
+            main.add_module('extra-layers-{0}-{1}-relu'.format(t, cndf),
+                            nn.LeakyReLU(0.2, inplace=True))
+
+        while csize > 4:
+            in_feat = cndf
+            out_feat = cndf * 2
+            main.add_module('pyramid-{0}-{1}-conv'.format(in_feat, out_feat),
+                            nn.Conv2d(in_feat, out_feat, 4, 2, 1, bias=False))
+            main.add_module('pyramid-{0}-batchnorm'.format(out_feat),
+                            nn.BatchNorm2d(out_feat))
+            main.add_module('pyramid-{0}-relu'.format(out_feat),
+                            nn.LeakyReLU(0.2, inplace=True))
+            cndf = cndf * 2
+            csize = csize / 2
+
+        # state size. K x 4 x 4
+        if add_final_conv:
+            main.add_module('final-{0}-{1}-conv'.format(cndf, 1),
+                            nn.Conv2d(cndf, nz, 4, 1, 0, bias=False))
+
+        self.main = main
+
+    def forward(self, input):
+        if self.ngpu > 1:
+            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
+        else:
+            output = self.main(input)
+
+        return output
+
+##
+class Decoder(nn.Module):
+    """
+    DCGAN DECODER NETWORK
+    """
+    def __init__(self, isize, nz, nc, ngf, ngpu, n_extra_layers=0):
+        super(Decoder, self).__init__()
+        self.ngpu = ngpu
+        assert isize % 16 == 0, "isize has to be a multiple of 16"
+
+        cngf, tisize = ngf // 2, 4
+        while tisize != isize:
+            cngf = cngf * 2
+            tisize = tisize * 2
+
+        main = nn.Sequential()
+        # input is Z, going into a convolution
+        main.add_module('initial-{0}-{1}-convt'.format(nz, cngf),
+                        nn.ConvTranspose2d(nz, cngf, 4, 1, 0, bias=False))
+        main.add_module('initial-{0}-batchnorm'.format(cngf),
+                        nn.BatchNorm2d(cngf))
+        main.add_module('initial-{0}-relu'.format(cngf),
+                        nn.ReLU(True))
+
+        csize, _ = 4, cngf
+        while csize < isize // 2:
+            main.add_module('pyramid-{0}-{1}-convt'.format(cngf, cngf // 2),
+                            nn.ConvTranspose2d(cngf, cngf // 2, 4, 2, 1, bias=False))
+            main.add_module('pyramid-{0}-batchnorm'.format(cngf // 2),
+                            nn.BatchNorm2d(cngf // 2))
+            main.add_module('pyramid-{0}-relu'.format(cngf // 2),
+                            nn.ReLU(True))
+            cngf = cngf // 2
+            csize = csize * 2
+
+        # Extra layers
+        for t in range(n_extra_layers):
+            main.add_module('extra-layers-{0}-{1}-conv'.format(t, cngf),
+                            nn.Conv2d(cngf, cngf, 3, 1, 1, bias=False))
+            main.add_module('extra-layers-{0}-{1}-batchnorm'.format(t, cngf),
+                            nn.BatchNorm2d(cngf))
+            main.add_module('extra-layers-{0}-{1}-relu'.format(t, cngf),
+                            nn.ReLU(True))
+
+        main.add_module('final-{0}-{1}-convt'.format(cngf, nc),
+                        nn.ConvTranspose2d(cngf, nc, 4, 2, 1, bias=False))
+        main.add_module('final-{0}-tanh'.format(nc),
+                        nn.Tanh())
+        self.main = main
+
+    def forward(self, input):
+        if self.ngpu > 1:
+            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
+        else:
+            output = self.main(input)
+        return output
+
+
+##
+class NetD(nn.Module):
+    """
+    DISCRIMINATOR NETWORK
+    """
+
+    def __init__(self, opt):
+        super(NetD, self).__init__()
+        model = Encoder(opt.isize, 1, opt.nc, opt.ngf, opt.ngpu, opt.extralayers)
+        layers = list(model.main.children())
+
+        self.features = nn.Sequential(*layers[:-1])
+        self.classifier = nn.Sequential(layers[-1])
+        self.classifier.add_module('Sigmoid', nn.Sigmoid())
+
+    def forward(self, x):
+        features = self.features(x)
+        features = features
+        classifier = self.classifier(features)
+        classifier = classifier.view(-1, 1).squeeze(1)
+
+        return classifier, features
+
+##
+class NetG(nn.Module):
+    """
+    GENERATOR NETWORK
+    """
+
+    def __init__(self, opt):
+        super(NetG, self).__init__()
+        self.encoder1 = Encoder(opt.isize, opt.nz, opt.nc, opt.ngf, opt.ngpu, opt.extralayers)
+        self.decoder = Decoder(opt.isize, opt.nz, opt.nc, opt.ngf, opt.ngpu, opt.extralayers)
+        self.encoder2 = Encoder(opt.isize, opt.nz, opt.nc, opt.ngf, opt.ngpu, opt.extralayers)
+
+    def forward(self, x):
+        latent_i = self.encoder1(x)
+        gen_imag = self.decoder(latent_i)
+        latent_o = self.encoder2(gen_imag)
+        return gen_imag, latent_i, latent_o
+
+
+
 
 
 class BaseModel():
+    """ Base Model for ganomaly
     """
-    Base Model for GAN
+    def __init__(self, opt, dataloader):
+        ##
+        # Seed for deterministic behavior
+        self.seed(opt.manualseed)
 
-    """
-
-    def __init__(self, args, dataloader):
-
-        self.args = args
+        # Initalize variables.
+        self.opt = opt
+        self.visualizer = Visualizer(opt)
         self.dataloader = dataloader
+        self.trn_dir = os.path.join(self.opt.outf, self.opt.name, 'train')
+        self.tst_dir = os.path.join(self.opt.outf, self.opt.name, 'test')
+        self.device = torch.device("cuda:0" if self.opt.device != 'cpu' else "cpu")
 
-        self.global_step = 0
-        self.best_roc = 0
-        self.best_pr = 0
-        self.color_video_dict = OrderedDict()
-        self.gray_video_dict = OrderedDict()
-        self.train_errors_dict = {}
-        self.test_errors_dict = {}
-        self.hist_dict = OrderedDict()
-        self.score_dict = OrderedDict()
-        
-        # set using gpu
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    ##
+    def set_input(self, input:torch.Tensor):
+        """ Set input and ground truth
 
-        # make save root dir
-        from datetime import datetime
-        current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        comment = "b{}xd{}xwh{}_lr-{}_w-a{}c{}".format(args.batchsize, args.nfr, args.isize, 
-                                                    args.lr, args.w_adv, args.w_con)
-        self.save_root_dir = os.path.join(args.result_root, args.model, comment, current_time)
-        if not os.path.exists(self.save_root_dir): os.makedirs(self.save_root_dir)
-        # make weights save dir
-        self.weight_dir = os.path.join(self.save_root_dir,'weights')
-        if not os.path.exists(self.weight_dir): os.makedirs(self.weight_dir)
-        # make tensorboard logdir 
-        logdir = os.path.join(self.save_root_dir, "runs")
-        if not os.path.exists(logdir): os.makedirs(logdir)
-        self.writer = SummaryWriter(log_dir=logdir)
-        #save args
-        with open(self.save_root_dir+"/args.txt", mode="w") as f:
-            json.dump(args.__dict__, f, indent=4)
-
-        print("\n SAVE PATH == {} \n".format(self.save_root_dir))
-
-    def update_summary(self):
-        # VIDEO
-        for t, v in self.color_video_dict.items():
-            grid = [make_grid(f, nrow=self.args.batchsize, normalize=True) for f in v.permute(2, 0, 1, 3, 4)]
-            self.writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), self.global_step)
-
-        for t, v in self.gray_video_dict.items():
-            grid = [make_grid(f, nrow=self.args.batchsize, normalize=False) for f in v.permute(2, 0, 1, 3, 4)]
-            self.writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), self.global_step)
-
-        # ERROR
-        for t, e in self.train_errors_dict.items():
-            self.writer.add_scalar(t, e, self.global_step)
-        for t, e in self.test_errors_dict.items():
-            self.writer.add_scalars(t, e, self.global_step)
-
-        # HISTOGRAM
-        for t, h in self.hist_dict.items():
-            self.writer.add_histogram(t, h)
-
-        # SCORE
-        for t, s in self.score_dict.items():
-            self.writer.add_scalar(t, s, self.global_step)
-
-    def save_weights(self, name_head):
-        # -- Save Weights of NetG and NetD --
-        torch.save({'epoch': self.epoch + 1, 'state_dict': self.netg.state_dict()},
-                   '%s/%s_ep%04d_netG.pth' % (self.weight_dir, name_head, self.epoch))
-        torch.save({'epoch': self.epoch + 1, 'state_dict': self.netd.state_dict()},
-                   '%s/%s_ep%04d_netD.pth' % (self.weight_dir, name_head, self.epoch))
-
-
-    def test_epoch_end(self):
-        
-        self.netg.eval()
-        self.netd.eval()
-
-        err_g_adv_s_ = []
-        err_g_adv_t_ = []
-        err_g_adv_ = []
-        err_g_con_ = []
-        err_g_pre_ = []
-        err_g_ = []
-
-        err_d_real_s_ = []
-        err_d_real_t_ = []
-        err_d_fake_s_ = []
-        err_d_fake_t_ = []
-        err_d_real_ = []
-        err_d_fake_ = []
-        err_d_ = []
-
-        predicts = []
-        gts = []
-
+        Args:
+            input (FloatTensor): Input data for batch i.
+        """
         with torch.no_grad():
-            # load weights 
-            if self.args.load_weights != " " :
-                path = self.args.load_weights
+            self.input.resize_(input[0].size()).copy_(input[0])
+            self.gt.resize_(input[1].size()).copy_(input[1])
+            self.label.resize_(input[1].size())
+
+            # Copy the first batch as the fixed input.
+            if self.total_steps == self.opt.batchsize:
+                self.fixed_input.resize_(input[0].size()).copy_(input[0])
+
+    ##
+    def seed(self, seed_value):
+        """ Seed 
+        
+        Arguments:
+            seed_value {int} -- [description]
+        """
+        # Check if seed is default value
+        if seed_value == -1:
+            return
+
+        # Otherwise seed all functionality
+        import random
+        random.seed(seed_value)
+        torch.manual_seed(seed_value)
+        torch.cuda.manual_seed_all(seed_value)
+        np.random.seed(seed_value)
+        torch.backends.cudnn.deterministic = True
+
+    ##
+    def get_errors(self):
+        """ Get netD and netG errors.
+
+        Returns:
+            [OrderedDict]: Dictionary containing errors.
+        """
+
+        errors = OrderedDict([
+            ('err_d', self.err_d.item()),
+            ('err_g', self.err_g.item()),
+            ('err_g_adv', self.err_g_adv.item()),
+            ('err_g_con', self.err_g_con.item()),
+            ('err_g_enc', self.err_g_enc.item())])
+
+        return errors
+
+    ##
+    def get_current_images(self):
+        """ Returns current images.
+
+        Returns:
+            [reals, fakes, fixed]
+        """
+
+        reals = self.input.data
+        fakes = self.fake.data
+        fixed = self.netg(self.fixed_input)[0].data
+
+        return reals, fakes, fixed
+
+    ##
+    def save_weights(self, epoch):
+        """Save netG and netD weights for the current epoch.
+
+        Args:
+            epoch ([int]): Current epoch number.
+        """
+
+        weight_dir = os.path.join(self.opt.outf, self.opt.name, 'train', 'weights')
+        if not os.path.exists(weight_dir): os.makedirs(weight_dir)
+
+        torch.save({'epoch': epoch + 1, 'state_dict': self.netg.state_dict()},
+                   '%s/netG.pth' % (weight_dir))
+        torch.save({'epoch': epoch + 1, 'state_dict': self.netd.state_dict()},
+                   '%s/netD.pth' % (weight_dir))
+
+    ##
+    def train_one_epoch(self):
+        """ Train the model for one epoch.
+        """
+
+        self.netg.train()
+        epoch_iter = 0
+        for data in tqdm(self.dataloader['train'], leave=False, total=len(self.dataloader['train'])):
+            self.total_steps += self.opt.batchsize
+            epoch_iter += self.opt.batchsize
+
+            self.set_input(data)
+            # self.optimize()
+            self.optimize_params()
+
+            if self.total_steps % self.opt.print_freq == 0:
+                errors = self.get_errors()
+                if self.opt.display:
+                    counter_ratio = float(epoch_iter) / len(self.dataloader['train'].dataset)
+                    self.visualizer.plot_current_errors(self.epoch, counter_ratio, errors)
+
+            if self.total_steps % self.opt.save_image_freq == 0:
+                reals, fakes, fixed = self.get_current_images()
+                self.visualizer.save_current_images(self.epoch, reals, fakes, fixed)
+                if self.opt.display:
+                    self.visualizer.display_current_images(reals, fakes, fixed)
+
+        print(">> Training model %s. Epoch %d/%d" % (self.name, self.epoch+1, self.opt.niter))
+        # self.visualizer.print_current_errors(self.epoch, errors)
+
+    ##
+    def train(self):
+        """ Train the model
+        """
+
+        ##
+        # TRAIN
+        self.total_steps = 0
+        best_auc = 0
+
+        # Train for niter epochs.
+        print(">> Training model %s." % self.name)
+        for self.epoch in range(self.opt.iter, self.opt.niter):
+            # Train for one epoch
+            self.train_one_epoch()
+            res = self.test()
+            if res['AUC'] > best_auc:
+                best_auc = res['AUC']
+                self.save_weights(self.epoch)
+            self.visualizer.print_current_performance(res, best_auc)
+        print(">> Training model %s.[Done]" % self.name)
+
+    ##
+    def test(self):
+        """ Test GANomaly model.
+
+        Args:
+            dataloader ([type]): Dataloader for the test set
+
+        Raises:
+            IOError: Model weights not found.
+        """
+        with torch.no_grad():
+            # Load the weights of netg and netd.
+            if self.opt.load_weights:
+                path = "./output/{}/{}/train/weights/netG.pth".format(self.name.lower(), self.opt.dataset)
                 pretrained_dict = torch.load(path)['state_dict']
 
                 try:
                     self.netg.load_state_dict(pretrained_dict)
                 except IOError:
                     raise IOError("netG weights not found")
-                print("Loaded weights.")
+                print('   Loaded weights.')
 
-            # Test
-            pbar = tqdm(self.dataloader['test'], leave=True, ncols=100, total=len(self.dataloader['test']))
-            for i, data in enumerate(pbar):
-                # set test data 
-                input, real, gt, lb = (d.to(self.device) for d in data)
-                # NetG
-                predict_ = self.netg(input) # Reconstract self.input
-                t_pre_ = threshold(predict_.detach())
-                m_pre_ = morphology_proc(t_pre_)
-                gts.append(gt.permute(0, 2, 3, 4, 1).cpu().numpy())
-                predicts.append(predict_.permute(0, 2, 3, 4, 1).cpu().numpy())
-                # NetD
-                # calc Optical Flow 
-                gt_3ch_ = gray2rgb(gt)
-                pre_3ch_ = gray2rgb(predict_)
-                gt_flow_ = video_to_flow(gt_3ch_.detach()).to(self.device)
-                pre_flow_ = video_to_flow(pre_3ch_).to(self.device)
-                # get disc output
-                s_pred_real_, s_feat_real_, t_pred_real_, t_feat_real_ \
-                                        = self.netd(gt_3ch_, gt_flow_.detach())
-                s_pred_fake_, s_feat_fake_, t_pred_fake_, t_feat_fake_ \
-                                        = self.netd(pre_3ch_.detach(), pre_flow_.detach())
-                # Calc err_g
-                err_g_adv_s_.append(self.l_adv(s_feat_real_, s_feat_fake_).item())
-                err_g_adv_t_.append(self.l_adv(t_feat_real_, t_feat_fake_).item())
-                err_g_adv_.append(err_g_adv_s_[-1] + err_g_adv_t_[-1])
-                err_g_con_.append(self.l_con(predict_, gt).item())
-                err_g_con_.append(err_g_adv_t_[-1] * self.args.w_adv + err_g_con_[-1] * self.args.w_con)
-                # Calc err_d
-                err_d_real_s_.append(self.l_bce(s_pred_real_, self.real_label).item())
-                err_d_real_t_.append(self.l_bce(t_pred_real_, self.real_label).item())
-                err_d_fake_s_.append(self.l_bce(s_pred_fake_, self.gout_label).item())
-                err_d_fake_t_.append(self.l_bce(t_pred_fake_, self.gout_label).item())
-                err_d_real_.append((err_d_real_s_[-1] + err_d_real_t_[-1]) * 0.5)
-                err_d_fake_.append((err_d_fake_s_[-1] + err_d_fake_t_[-1]) * 0.5)
-                err_d_.append((err_d_real_[-1] + err_d_fake_[-1]) * 0.5)
-                
-                # test video summary
-                self.color_video_dict.update({
-                        'test/input-real': torch.cat([input, real], dim=3),
-                    })
-                self.gray_video_dict.update({
-                        'test/gt-pre-th-morph': torch.cat([gt, predict_, t_pre_, m_pre_], dim=3)
-                    })
-                self.hist_dict.update({
-                    "test/inp": input,
-                    "test/gt": gt,
-                    "test/predict": predict_,
-                    "test/t_pre": t_pre_,
-                    "test/m_pre": m_pre_
-                    })
+            self.opt.phase = 'test'
 
-                pbar.set_description("[TEST  Epoch %d/%d]" % (self.epoch+1, self.args.ep))
+            # Create big error tensor for the test set.
+            self.an_scores = torch.zeros(size=(len(self.dataloader['test'].dataset),), dtype=torch.float32, device=self.device)
+            self.gt_labels = torch.zeros(size=(len(self.dataloader['test'].dataset),), dtype=torch.long,    device=self.device)
+            self.latent_i  = torch.zeros(size=(len(self.dataloader['test'].dataset), self.opt.nz), dtype=torch.float32, device=self.device)
+            self.latent_o  = torch.zeros(size=(len(self.dataloader['test'].dataset), self.opt.nz), dtype=torch.float32, device=self.device)
 
-            # AUC
-            gts = np.asarray(np.stack(gts), dtype=np.int32).flatten()
-            predicts = np.asarray(np.stack(predicts)).flatten()
-            roc = evaluate(gts, predicts, self.best_roc, self.epoch, self.save_root_dir, metric='roc')
-            pr = evaluate(gts, predicts, self.best_pr, self.epoch, self.save_root_dir, metric='pr')
-            f1 = evaluate(gts, predicts, metric='f1_score')
-            if roc > self.best_roc: 
-                self.best_roc = roc
-                self.save_weights('roc')
-            elif pr > self.best_pr:
-                self.best_pr = pr
-                self.save_weights('pr')
-                
-            # Update summary of loss ans auc
-            self.score_dict.update({
-                    "score/roc": roc,
-                    "score/pr": pr,
-                    "score/f1": f1
-                })
-            self.test_errors_dict.update({
-                        'd/err_d_real_s/train': np.mean(err_d_real_s_),
-                        'd/err_d_real_t/train': np.mean(err_d_real_t_),
-                        'd/err_d_fake_s/train': np.mean(err_d_fake_s_),
-                        'd/err_d_fake_t/train': np.mean(err_d_fake_t_),
-                        'd/err_d_real/train': np.mean(err_d_real_),
-                        'd/err_d_fake/train': np.mean(err_d_fake_),
-                        'd/err_d/test': np.mean(err_d_),
-                        'g/err_g_adv_s/test': np.mean(err_g_adv_s_),
-                        'g/err_g_adv_t/test': np.mean(err_g_adv_t_),
-                        'g/err_g_adv/test': np.mean(err_g_adv_),
-                        'g/err_g_con/test': np.mean(err_g_con_),
-                        'g/err_g/test': np.mean(err_g_)
-                        })
+            # print("   Testing model %s." % self.name)
+            self.times = []
+            self.total_steps = 0
+            epoch_iter = 0
+            for i, data in enumerate(self.dataloader['test'], 0):
+                self.total_steps += self.opt.batchsize
+                epoch_iter += self.opt.batchsize
+                time_i = time.time()
+                self.set_input(data)
+                self.fake, latent_i, latent_o = self.netg(self.input)
 
-    def train(self):
+                error = torch.mean(torch.pow((latent_i-latent_o), 2), dim=1)
+                time_o = time.time()
 
-        print(" >> Training model %s." % self.args.model)
+                self.an_scores[i*self.opt.batchsize : i*self.opt.batchsize+error.size(0)] = error.reshape(error.size(0))
+                self.gt_labels[i*self.opt.batchsize : i*self.opt.batchsize+error.size(0)] = self.gt.reshape(error.size(0))
+                self.latent_i [i*self.opt.batchsize : i*self.opt.batchsize+error.size(0), :] = latent_i.reshape(error.size(0), self.opt.nz)
+                self.latent_o [i*self.opt.batchsize : i*self.opt.batchsize+error.size(0), :] = latent_o.reshape(error.size(0), self.opt.nz)
 
-        for self.epoch in range(self.args.ep):
-            pbar = tqdm(self.dataloader['train'], leave=True, ncols=100, total=len(self.dataloader['train']))
-            for i, data in enumerate(pbar):
+                self.times.append(time_o - time_i)
 
-                self.global_step += 1
-                self.netg.train()
-                self.netd.train()
+                # Save test images.
+                if self.opt.save_test_images:
+                    dst = os.path.join(self.opt.outf, self.opt.name, 'test', 'images')
+                    if not os.path.isdir(dst):
+                        os.makedirs(dst)
+                    real, fake, _ = self.get_current_images()
+                    vutils.save_image(real, '%s/real_%03d.eps' % (dst, i+1), normalize=True)
+                    vutils.save_image(fake, '%s/fake_%03d.eps' % (dst, i+1), normalize=True)
 
-                self.input, self.real, self.gt, self.lb = (d.to(self.device) for d in data)
-                self.optimize_params()
+            # Measure inference time.
+            self.times = np.array(self.times)
+            self.times = np.mean(self.times[:100] * 1000)
 
-                if self.global_step % self.args.test_freq == 0:
-                    # -- TEST --
-                    self.test_epoch_end()
-                
-                if self.global_step % self.args.display_freq == 0:
-                    # -- Update Summary on Tensorboard --
-                    self.update_summary()
+            # Scale error vector between [0, 1]
+            self.an_scores = (self.an_scores - torch.min(self.an_scores)) / (torch.max(self.an_scores) - torch.min(self.an_scores))
+            # auc, eer = roc(self.gt_labels, self.an_scores)
+            auc = evaluate(self.gt_labels, self.an_scores, metric=self.opt.metric)
+            performance = OrderedDict([('Avg Run Time (ms/batch)', self.times), ('AUC', auc)])
 
-                pbar.set_description("[TRAIN Epoch %d/%d]" % (self.epoch+1, self.args.ep))
-     
-            print(">> Training model %s. Epoch %d/%d " % (self.name, self.epoch+1, self.args.ep))
-            
-        print(" >> Training model %s.[Done]" % self.args.model)
+            if self.opt.display_id > 0 and self.opt.phase == 'test':
+                counter_ratio = float(epoch_iter) / len(self.dataloader['test'].dataset)
+                self.visualizer.plot_performance(self.epoch, counter_ratio, performance)
+            return performance
 
-
-
+##
 class Ganomaly(BaseModel):
+    """GANomaly Class
+    """
 
     @property
     def name(self): return 'Ganomaly'
 
-    def __init__(self, args, dataloader):
-        super(Ganomaly, self).__init__(args, dataloader)
+    def __init__(self, opt, dataloader):
+        super(Ganomaly, self).__init__(opt, dataloader)
 
         # -- Misc attributes
-        inp_shape = (self.args.batchsize, self.args.ich, 
-                    self.args.nfr, self.args.isize, self.args.isize)
+        self.epoch = 0
+        self.times = []
+        self.total_steps = 0
 
-        # Create and initialize networkgs.
-        if len(self.args.gpu) > 1:
-            self.netg = torch.nn.DataParallel(NetG(), device_ids=self.args.gpu, dim=0)
-            self.netd = torch.nn.DataParallel(NetD(self.args), device_ids=self.args.gpu, dim=0)
-            self.netg = self.netg.cuda()
-            self.netd = self.netd.cuda()
-            cudnn.benchmark = True
-        else:
-            self.netg = NetG().to(self.device)
-            self.netd = NetD(self.args).to(self.device)
+        ##
+        # Create and initialize networks.
+        self.netg = NetG(self.opt).to(self.device)
+        self.netd = NetD(self.opt).to(self.device)
         self.netg.apply(weights_init)
         self.netd.apply(weights_init)
 
-        #pre-trained network load
-        if self.args.resume != '' :
-            print("\n Loading pre-trained networks.")
-            #self.args.iter = torch.load(self.args.resume)['epoch']
-            self.netg.load_state_dict(torch.load(os.path.join(self.args.resume, \
-                                                            'ep0004_netG.pth'))['state_dict'])
-            self.netd.load_state_dict(torch.load(os.path.join(self.args.resume, 
-                                                            'ep0004_netD.pth'))['state_dict'])
-            print("\t Done. \n")
+        ##
+        if self.opt.resume != '':
+            print("\nLoading pre-trained networks.")
+            self.opt.iter = torch.load(os.path.join(self.opt.resume, 'netG.pth'))['epoch']
+            self.netg.load_state_dict(torch.load(os.path.join(self.opt.resume, 'netG.pth'))['state_dict'])
+            self.netd.load_state_dict(torch.load(os.path.join(self.opt.resume, 'netD.pth'))['state_dict'])
+            print("\tDone.\n")
 
-
-        #Loss function
         self.l_adv = l2_loss
-        #self.l_pre = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(30))
-        self.l_con = nn.BCELoss()
-        self.l_bce = bce_smooth
+        self.l_con = nn.L1Loss()
+        self.l_enc = l2_loss
+        self.l_bce = nn.BCELoss()
 
-        #Initialize input tensors
-        self.input = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
-        self.real = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
-        self.gt = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
-        self.lb = torch.empty(size=inp_shape, dtype=torch.float32, device=self.device)
-        self.real_label = torch.ones(size=(self.args.batchsize,), 
-                                            dtype=torch.float32, device=self.device)
-        self.gout_label = torch.zeros(size=(self.args.batchsize,), 
-                                            dtype=torch.float32, device=self.device)
-
-        #Setup Optimizer
-        if self.args.isTrain:
+        ##
+        # Initialize input tensors.
+        self.input = torch.empty(size=(self.opt.batchsize, 3, self.opt.isize, self.opt.isize), dtype=torch.float32, device=self.device)
+        self.label = torch.empty(size=(self.opt.batchsize,), dtype=torch.float32, device=self.device)
+        self.gt    = torch.empty(size=(opt.batchsize,), dtype=torch.long, device=self.device)
+        self.fixed_input = torch.empty(size=(self.opt.batchsize, 3, self.opt.isize, self.opt.isize), dtype=torch.float32, device=self.device)
+        self.real_label = torch.ones (size=(self.opt.batchsize,), dtype=torch.float32, device=self.device)
+        self.fake_label = torch.zeros(size=(self.opt.batchsize,), dtype=torch.float32, device=self.device)
+        ##
+        # Setup optimizer
+        if self.opt.isTrain:
             self.netg.train()
             self.netd.train()
-            self.optimizer_d = optim.Adam(self.netd.parameters(), 
-                                    lr= self.args.lr, betas=(self.args.beta1, 0.999))
-            self.optimizer_g = optim.Adam(self.netg.parameters(), 
-                                    lr= self.args.lr, betas=(self.args.beta1, 0.999))
+            self.optimizer_d = optim.Adam(self.netd.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, 0.999))
+            self.optimizer_g = optim.Adam(self.netg.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, 0.999))
 
+    ##
     def forward_g(self):
-        self.predict = self.netg(self.input)
-        
+        """ Forward propagate through netG
+        """
+        self.fake, self.latent_i, self.latent_o = self.netg(self.input)
+
+    ##
     def forward_d(self):
-        pre_3ch = gray2rgb(self.predict.detach())
-        gt_3ch = gray2rgb(self.gt.detach())
-        gt_flow = video_to_flow(gt_3ch.detach()).to(self.device)
-        pre_flow = video_to_flow(pre_3ch.detach()).to(self.device)
-        self.s_pred_real, self.s_feat_real, self.t_pred_real, self.t_feat_real \
-                = self.netd(gt_3ch, gt_flow.detach())
-        self.s_pred_fake, self.s_feat_fake, self.t_pred_fake, self.t_feat_fake \
-                = self.netd(pre_3ch.detach(), pre_flow.detach())
+        """ Forward propagate through netD
+        """
+        self.pred_real, self.feat_real = self.netd(self.input)
+        self.pred_fake, self.feat_fake = self.netd(self.fake.detach())
 
-        t_pre = threshold(self.predict.detach())
-        m_pre = morphology_proc(self.predict.detach())
-        
-        # set dict for summary
-        self.color_video_dict.update({
-                "train/input-real-inflow-genflow": torch.cat([self.input, self.real, gt_flow, pre_flow], dim=3)})
-        self.gray_video_dict.update({
-                "train/gt-pre-th-morph": torch.cat([self.gt, self.predict, t_pre, m_pre], dim=3)
-                })
-        self.hist_dict.update({
-            "train/input": self.input,
-            "train/gt": self.gt,
-            "train/predict": self.predict,
-            "train/t_pre": t_pre,
-            "train/m_pre": m_pre
-            })
-    
+    ##
     def backward_g(self):
-        err_g_adv_s = self.l_adv(self.s_feat_real, self.s_feat_fake)
-        err_g_adv_t = self.l_adv(self.t_feat_real, self.t_feat_fake)
-        err_g_adv = err_g_adv_s + err_g_adv_t
-        err_g_con = self.l_con(self.predict, self.gt)
-        err_g = err_g_adv * self.args.w_adv + \
-                     err_g_con * self.args.w_con
-        err_g.backward(retain_graph=True)
+        """ Backpropagate through netG
+        """
+        self.err_g_adv = self.l_adv(self.netd(self.input)[1], self.netd(self.fake)[1])
+        self.err_g_con = self.l_con(self.fake, self.input)
+        self.err_g_enc = self.l_enc(self.latent_o, self.latent_i)
+        self.err_g = self.err_g_adv * self.opt.w_adv + \
+                     self.err_g_con * self.opt.w_con + \
+                     self.err_g_enc * self.opt.w_enc
+        self.err_g.backward(retain_graph=True)
 
-        self.train_errors_dict.update({
-                        'g/err_g/train': err_g.item(),
-                        'g/err_g_adv/train': err_g_adv.item(),
-                        'g/err_g_adv_s/train': err_g_adv_s.item(),
-                        'g/err_g_adv_t/train': err_g_adv_t.item(),
-                        'g/err_g_con/train': err_g_con.item()
-                        })
-
-
+    ##
     def backward_d(self):
-        err_d_real_s = self.l_bce(self.s_pred_real, self.real_label)
-        err_d_real_t = self.l_bce(self.t_pred_real, self.real_label)
-        err_d_fake_s = self.l_bce(self.s_pred_fake, self.gout_label)
-        err_d_fake_t = self.l_bce(self.t_pred_fake, self.gout_label)
+        """ Backpropagate through netD
+        """
+        # Real - Fake Loss
+        self.err_d_real = self.l_bce(self.pred_real, self.real_label)
+        self.err_d_fake = self.l_bce(self.pred_fake, self.fake_label)
 
-        err_d_real = (err_d_real_s + err_d_real_t) * 0.5
-        err_d_fake = (err_d_fake_s + err_d_fake_t) * 0.5
+        # NetD Loss & Backward-Pass
+        self.err_d = (self.err_d_real + self.err_d_fake) * 0.5
+        self.err_d.backward()
 
-        err_d = (err_d_real + err_d_fake) * 0.5
-
-        self.train_errors_dict.update({
-                        'd/err_d_real_s/train': err_d_real_s.item(),
-                        'd/err_d_real_t/train': err_d_real_t.item(),
-                        'd/err_d_fake_s/train': err_d_fake_s.item(),
-                        'd/err_d_fake_t/train': err_d_fake_t.item(),
-                        'd/err_d_real/train': err_d_real.item(),
-                        'd/err_d_fake/train': err_d_fake.item(),
-                        'd/err_d/train': err_d.item()
-                        })
-
-        err_d.backward()
-
+    ##
     def reinit_d(self):
+        """ Re-initialize the weights of netD
+        """
         self.netd.apply(weights_init)
-        print('Reloading Net d')
+        print('   Reloading net d')
 
     def optimize_params(self):
-
+        """ Forwardpass, Loss Computation and Backwardpass.
+        """
+        # Forward-pass
         self.forward_g()
         self.forward_d()
 
-        #netg
+        # Backward-pass
+        # netg
         self.optimizer_g.zero_grad()
         self.backward_g()
         self.optimizer_g.step()
 
-        #netd
+        # netd
         self.optimizer_d.zero_grad()
         self.backward_d()
         self.optimizer_d.step()
-        #if self.err_d.item() < 1e-5: self.reinit_d()
-
-
-
+        if self.err_d.item() < 1e-5: self.reinit_d()

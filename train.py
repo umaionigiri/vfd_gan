@@ -16,12 +16,21 @@ def main(args):
     print("--Load model--")
     # proposed model
     if args.model == 'ganbase':
-        from ganomaly import Ganomaly
-        model = Ganomaly(args, dataloader)
+        from vfd_gan import VFD_GAN
+        model = VFD_GAN(args, dataloader)
     # comparision model
+    elif args.model == 'anogan':
+        from anogan import AnoGAN
+        model = AnoGAN(args, dataloader)
+    #elif args.model == 'ganomaly':
+        #from ganomaly import Ganomaly
+        #model = Ganomaly(args, dataloader)
+    elif args.model == 'c2plus1d':
+        from models import SpatialTempModel
+        model = SpatialTempModel(args, dataloader)
     else:
-        from models import Comparision
-        model = Comparision(args, dataloader)
+        from models import SpatialTempModel
+        model = SpatialTempModel(args, dataloader)
 
     model.train()
         

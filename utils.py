@@ -114,17 +114,3 @@ def threshold(data):
     out = (data > t).float() * 1
     return out
 
-def predict_forg(gout, input):
-    # predict image
-    # diff video
-    diff = torch.abs(gout - input)
-    # normalize diff -> (0, 1)
-    diff_norm = [normalize(v) for v in diff.permute(2, 0, 1, 3, 4)]
-    diff_norm = torch.stack(diff_norm).permute(1, 0, 3, 4, 2) # (B, D, W, H, C)
-    # tensor to numpy
-    diff_norm = diff_norm.cpu().numpy()
-    # post processing 
-    diff_norm = rgb_to_gray(diff_norm)
-    predict = diff_norm
-    #predict = np.expand_dims(morphology_proc(predict), axis=1)
-    return torch.from_numpy(predict).permute(0, 4, 1, 2, 3)

@@ -16,10 +16,8 @@ import torch.backends.cudnn as cudnn
 
 from evaluate import evaluate
 from utils import weights_init
-from convlstm import ConvLSTMModel
-from xception import Xception
 
-class Comparision():
+class SpatialTempModel():
     def __init__(self, args, dataloader):
 
         self.args = args
@@ -28,10 +26,16 @@ class Comparision():
         
         if args.model == "xception":
             print("\n --Load Xception Model-- ")
+            from xception import Xception
             model = Xception()
         elif args.model == "clstm":
             print("\n --Load ConvLSTM Model-- ")
+            from convlstm import ConvLSTMModel
             model = ConvLSTMModel(args)
+        elif args.model == "c2plus1d":
+            print("\n --Load C2plus1d Model-- ")
+            from vfd_c2plus1d import AutoEncoder
+            model = AutoEncoder()
         else:
             print("\n Model name is wrong \n")
 
@@ -94,11 +98,7 @@ class Comparision():
             self.writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), self.global_step)
 
         # ERROR
-        for t, e in self.train_errors_dict.items():
-            spk = t.rsplit('/', 1)
-            self.writer.add_scalars(spk[0], {spk[1]: e}, self.global_step)
-
-        for t, e in self.test_errors_dict.items():
+        for t, e in self.errors_dict.items():
             spk = t.rsplit('/', 1)
             self.writer.add_scalars(spk[0], {spk[1]: e}, self.global_step)
 
@@ -136,6 +136,8 @@ class Comparision():
 
                 input_, real_, gt_, lb_ = (d.to('cuda') for d in data)
                 predict_ = self.model(input_)
+                t_pre_ = threshold(predict_)
+                m_pre_ = morphology_proc(t_pre_)
 
                 gts.append(gt_.permute(0,2,3,4,1).cpu().numpy())
                 predicts.append(predict_.permute(0,2,3,4,1).cpu().numpy())
@@ -146,7 +148,7 @@ class Comparision():
                         'test/input-real': torch.cat([input_, real_], dim=3),
                     })
                 self.gray_video_dict.update({
-                        'test/mask-predict': torch.cat([gt_, predict_], dim=3)
+                        'test/mask-pre-th-mor': torch.cat([gt_, predict_, t_pre_, m_pre_], dim=3)
                     })
 
                 pbar.set_description("[TEST Epoch %d/%d]" % (self.epoch, self.args.ep))
@@ -164,8 +166,8 @@ class Comparision():
                 self.best_pr = pr
                 self.save_weights('PR')
 
-            self.test_errors_dict.update({
-                    'test/err': np.mean(errs)
+            self.errors_dict.update({
+                    'loss/err/test': np.mean(errs)
                 })
             self.score_dict.update({
                     "score/roc": roc,
@@ -190,13 +192,18 @@ class Comparision():
                 err = self.loss(predict, gt) # Calc loss
                 err.backward() # Backward
                 self.opt.step()
+                
+                t_pre = threshold(predict)
+                m_pre = morphology_proc(t_pre)
 
                 self.color_video_dict.update({
-                            "train/input-real": torch.cat([input, real], dim=3),
-                            "train/gt-predict": torch.cat([gt, predict], dim=3)
+                            "train/input-real": torch.cat([input, real], dim=3)
                         })
-                self.train_errors_dict.update({
-                        'train/err': err.item()
+                self.gray_video_dict.update({
+                            "train/gt-pre-th-mor": torch.cat([gt, predict, t_pre, m_pre], dim=3)
+                    })
+                self.errors_dict.update({
+                        'loss/err/train': err.item()
                     })
 
                 if self.global_step % self.args.test_freq == 0:
