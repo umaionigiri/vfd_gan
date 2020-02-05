@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from matplotlib import rc
 #rc('font', **{'family': 'serif', 'serif': ['Computer Modern']})
 #rc('text', usetex=True)
+
 fig=plt.figure()
 
 def evaluate(labels, scores, best=None, iter=None, saveto=None, metric=None):
@@ -67,7 +68,7 @@ def roc(labels, scores, best, iter, saveto=None):
         plt.savefig(os.path.join(saveto, "ROC_%03d.png" % (iter)))
         plt.close()
         
-        with open(os.path.join(saveto,'roc_%03d' % (iter)), 'w', newline='') as f:
+        with open(os.path.join(saveto,'ROC_%03d' % (iter)), 'w', newline='') as f:
             writer = csv.writer(f)
             for data in zip(fpr, tpr):
                 writer.writerow(data)
@@ -97,7 +98,7 @@ def pr(labels, scores, best, iter, saveto=None):
         plt.savefig(os.path.join(saveto, 'PR_%03d.png' % (iter)))
         plt.close()
 
-        with open(os.path.join(saveto, 'pr_%03d' % (iter)), 'w', newline='') as f:
+        with open(os.path.join(saveto, 'PR_%03d' % (iter)), 'w', newline='') as f:
             writer = csv.writer(f)
             for data in zip(recall, precision):
                 writer.writerow(data)

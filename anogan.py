@@ -158,8 +158,8 @@ class AnoGAN():
         self.g_opt = torch.optim.Adam(self.netg.parameters(), lr=5*args.lr, betas=(0.5, 0.999))
         self.d_opt = torch.optim.Adam(self.netd.parameters(), lr=args.lr, betas=(0.5, 0.999))
 
-        self.ones_label = Variable(torch.ones(args.batchsize, 1)).cuda()
-        self.zeros_label = Variable(torch.zeros(args.batchsize, 1)).cuda()
+        self.ones_label = torch.ones(args.batchsize).cuda()
+        self.zeros_label = torch.zeros(args.batchsize).cuda()
 
     def update_summary(self):
         # VIDEO
@@ -197,6 +197,8 @@ class AnoGAN():
         self.netd.eval()
 
         gen_loss_ = []
+        dis_loss_real_ = []
+        dis_loss_fake_ = []
         dis_loss_ = []
 
         gts = []
@@ -220,41 +222,41 @@ class AnoGAN():
                 
                 # set test data 
                 input, real, gt, lb = (d.to('cuda') for d in data)
+                 
+                # Discriminator
 
-                # NetG
-                z = Variable(init.normal_(torch.Tensor(self.args.batchsize, 100), mean=0, std=0.1)).cuda()
-                gen_fake_ = self.netg.forward(z)
-                dis_fake_, _ = self.netd.forward(gen_fake_)
-                
+                dis_real_ = self.netd(real)[0].view(-1)
+                dis_loss_real_.append(self.loss(dis_real_, self.ones_label).item())
+
+                z = torch.randn(self.args.batchsize, 100, device='cuda')
+                gen_fake_ = self.netg(z)
+                dis_fake_ = self.netd(gen_fake_.detach())[0].view(-1)
+                dis_loss_fake_.append(self.loss(dis_fake_, self.zeros_label).item())
+                dis_loss_.append(dis_loss_real_[-1] + dis_loss_fake_[-1])
+
+                # Generator
+                dis_fake_ = self.netd(gen_fake_)[0].view(-1)
                 gen_loss_.append(self.loss(dis_fake_, self.ones_label).item())
                 
-                # NetD
-                #z = Variable(init.normal_(torch.Tensor(self.args.batchsize, 100), mean=0, std=0.1)).cuda()
-                #gen_fake_ = self.netg.forward(z)
-                #dis_fake_, _ = self.netd.forward(gen_fake_)
-                dis_real_, _ = self.netd.forward(real)
-                dis_loss_.append(self.loss(dis_fake_, self.zeros_label).item() + \
-                                self.loss(dis_real_, self.ones_label).item())
-                
-                predict = predict_forg(gen_fake_, real)
-                t_pre_ = threshold(predict.detach())
+                predict_ = predict_forg(gen_fake_, real)
+                t_pre_ = threshold(predict_.detach())
                 m_pre_ = morphology_proc(t_pre_)
 
                 gts.append(gt.permute(0, 2, 3, 4, 1).cpu().numpy())
-                predicts.append(predict.permute(0, 2, 3, 4, 1).cpu().numpy())
+                predicts.append(predict_.permute(0, 2, 3, 4, 1).cpu().numpy())
                 
                 # test video summary
                 self.color_video_dict.update({
                         'test/input-real-gen': torch.cat([input, real, gen_fake_], dim=3),
                     })
                 self.gray_video_dict.update({
-                        'test/gt-pre-th-morph': torch.cat([gt, predict, t_pre_, m_pre_], dim=3)
+                        'test/gt-pre-th-morph': torch.cat([gt, predict_, t_pre_, m_pre_], dim=3)
                     })
                 self.hist_dict.update({
                     "test/inp": input,
                     "test/gt": gt,
                     "test/gen": gen_fake_,
-                    "test/predict": predict,
+                    "test/predict": predict_,
                     "test/t_pre": t_pre_,
                     "test/m_pre": m_pre_
                     })
@@ -297,27 +299,28 @@ class AnoGAN():
                 self.global_step += 1
 
                 inp, real, gt, lb = (d.to('cuda') for d in data)
-                # Generator
-                self.netg.train()
-                self.g_opt.zero_grad()
-                z = Variable(init.normal_(torch.Tensor(self.args.batchsize, 100), mean=0, std=0.1)).cuda()
-                gen_fake = self.netg(z)
-                dis_fake, _ = self.netd(gen_fake)
-                gen_loss = torch.sum(self.loss(dis_fake, self.ones_label))
-                gen_loss.backward(retain_graph=True)
-                self.g_opt.step()
-                
+                 
                 # Discriminator
-                self.netd.train()
                 self.d_opt.zero_grad()
+
+                dis_real = self.netd(real)[0].view(-1)
+                dis_loss_real = self.loss(dis_real, self.ones_label)
+
+                z = torch.randn(self.args.batchsize, 100, device='cuda')
                 gen_fake = self.netg(z)
-                dis_fake, _ = self.netd.forward(gen_fake)
-                dis_real, _ = self.netd.forward(real)
-                dis_loss = torch.sum(self.loss(dis_fake, self.zeros_label)) + \
-                            torch.sum(self.loss(dis_real, self.ones_label))
+                dis_fake = self.netd(gen_fake.detach())[0].view(-1)
+                dis_loss_fake = self.loss(dis_fake, self.zeros_label)
+                dis_loss = dis_loss_real + dis_loss_fake
                 dis_loss.backward()
                 self.d_opt.step()
 
+                # Generator
+                self.g_opt.zero_grad()
+                dis_fake = self.netd(gen_fake)[0].view(-1)
+                gen_loss = self.loss(dis_fake, self.ones_label)
+                gen_loss.backward(retain_graph=True)
+                self.g_opt.step()
+                
                 predict = predict_forg(gen_fake.detach(), real)
                 t_pre = threshold(predict.detach())
                 m_pre = morphology_proc(t_pre)

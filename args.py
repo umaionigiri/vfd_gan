@@ -31,8 +31,7 @@ class Args():
         self.parser.add_argument('--lr', default=2e-5, type=float, help='initial learning rate for adam')
         self.parser.add_argument('--beta1', default=0.5, type=float, help='momentum term of adam')
         self.parser.add_argument('--w_adv', default=1, type=int, help='adversarial loss weight')
-        self.parser.add_argument('--w_con', default=0, type=int, help='adversarial loss weight')
-        self.parser.add_argument('--w_pre', default=10, type=int, help='reconstruction loss weight')
+        self.parser.add_argument('--w_con', default=10, type=int, help='adversarial loss weight')
         self.parser.add_argument('--display_freq', default=1, type=int, 
                                 help='frequency of showing training results on tensorboard')
         self.parser.add_argument('--save_weight_freq', default=1, type=int, 
@@ -47,6 +46,7 @@ class Args():
 
         self.parser.add_argument('--resume', default="", type=str, help='train model ')
         self.parser.add_argument('--isTrain', default=True, action="store_true", help='train or test ')
+        self.parser.add_argument('--ae', default=False, action="store_true", help='use autoencoder  on c2plus1d net as Generator')
 
     def parse(self):
         

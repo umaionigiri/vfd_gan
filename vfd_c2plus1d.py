@@ -48,24 +48,23 @@ class C2plus1d_Block(nn.Module):
 
         return x
 
+
 class AutoEncoder(nn.Module):
     def __init__(self):
         super(AutoEncoder, self).__init__()
-        
+ 
         self.down_sep1 = C2plus1d_Block(3, 64)
         self.down_sep2 = C2plus1d_Block(64, 128)
         self.down_sep3 = C2plus1d_Block(128, 256)
         self.down_sep4 = C2plus1d_Block(256, 512)
-        
-        self.up_sep1 = C2plus1d_Block(512, 256)
-        self.up_sep2 = C2plus1d_Block(256+256, 256)
-        self.up_sep3 = C2plus1d_Block(256+128, 128)
-        self.up_sep4 = C2plus1d_Block(128+64, 64)
+         
+        self.up_sep1 = c2plus1d_block(512, 256)
+        self.up_sep2 = c2plus1d_block(256+256, 256)
+        self.up_sep3 = c2plus1d_block(256+128, 128)
+        self.up_sep4 = c2plus1d_block(128+64, 64)
 
         self.conv_last = nn.Conv3d(64, 1, 3, stride=1, padding=1, bias=False)
-
         self.sigmoid = nn.Sigmoid()
-
 
     def forward(self, x):
         
@@ -74,7 +73,7 @@ class AutoEncoder(nn.Module):
         down_sep2 = self.down_sep2(down_sep1, down_samp=True) # 128x4x32x32
         down_sep3 = self.down_sep3(down_sep2, down_samp=True) # 256x2x16x16
         down_sep4 = self.down_sep4(down_sep3, down_samp=True) # 512x1x8x8
-        
+         
         #Decoder
         up_sep1 = self.up_sep1(down_sep4, down_samp=False) # 256x2x16x16
         x = torch.cat([up_sep1, down_sep3], dim=1) # 512x2x16x16
@@ -83,8 +82,10 @@ class AutoEncoder(nn.Module):
         up_sep3 = self.up_sep3(x, down_samp=False) # 128x8x64x64
         x = torch.cat([up_sep3, down_sep1], dim=1) # 128+64x8x64x64
         up_sep4 = self.up_sep4(x, down_samp=False) # 64x16x128x128
-
+        
         x = self.conv_last(up_sep4) # 1x16x128x128
 
         return self.sigmoid(x)
+
+
 

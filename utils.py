@@ -20,26 +20,19 @@ def weights_init(m):
         m.bias.data.fill_(0)
     
 
-def l2_loss(inp, target, size_average=True):
+def l2_loss(input, target, size_average=True):
     if size_average:
-        return torch.mean(torch.pow((inp-target), 2))
+        return torch.mean(torch.pow((input-target), 2))
     else:
-        return torch.pow((inp-target), 2)
+        return torch.pow((input-target), 2)
 
-def bce_smooth(inputs, target, weight=None, reduction='mean', smooth_eps=None, from_logits=False):
+def bce_smooth(input, target, weight=None, reduction='mean', smooth_eps=None, from_logits=False):
     smooth_eps = smooth_eps or 0
     if smooth_eps > 0:
-        target = target.float()
-        target.add_(smooth_eps).div_(2.)
-    return F.binary_cross_entropy(inputs, target, weight=weight, reduction=reduction)
-
-
-def calc_pos_wights(output):
-    c_zero = torch.sum(output == 0)
-    c_non_zero = torch.sum(output > 0)
-    print("{} , {} ".format(c_zero, c_non_zero))
-    weights = torch.tensor(c_zero/c_non_zero)
-    return weights
+        with torch.no_grad():
+            target = target.float()
+            target.add_(smooth_eps).div_(2.)
+    return F.binary_cross_entropy(input, target, weight=weight, reduction=reduction)
 
 def normalize(tensor):
     """

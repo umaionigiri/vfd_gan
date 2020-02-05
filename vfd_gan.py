@@ -15,9 +15,9 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision
 import torch.backends.cudnn as cudnn
 
+from network import NetD
 from evaluate import evaluate
 from utils import *
-from network import NetG, NetD
 
 class BaseModel():
     """
@@ -35,8 +35,7 @@ class BaseModel():
         self.best_pr = 0
         self.color_video_dict = OrderedDict()
         self.gray_video_dict = OrderedDict()
-        self.train_errors_dict = {}
-        self.test_errors_dict = {}
+        self.errors_dict = {}
         self.hist_dict = OrderedDict()
         self.score_dict = OrderedDict()
         
@@ -74,14 +73,14 @@ class BaseModel():
             self.writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), self.global_step)
 
         # ERROR
-        for t, e in self.train_errors_dict.items():
-            self.writer.add_scalar(t, e, self.global_step)
-        for t, e in self.test_errors_dict.items():
-            self.writer.add_scalar(t, e, self.global_step)
-
+        for t, e in self.errors_dict.items():
+            spk = t.rsplit('/',1)
+            self.writer.add_scalars(spk[0], {spk[1]: e}, self.global_step)
+        """
         # HISTOGRAM
         for t, h in self.hist_dict.items():
             self.writer.add_histogram(t, h)
+        """
 
         # SCORE
         for t, s in self.score_dict.items():
@@ -203,13 +202,13 @@ class BaseModel():
                     "score/pr": pr,
                     "score/f1": f1
                 })
-            self.test_errors_dict.update({
-                        'd/err_d_real_s/train': np.mean(err_d_real_s_),
-                        'd/err_d_real_t/train': np.mean(err_d_real_t_),
-                        'd/err_d_fake_s/train': np.mean(err_d_fake_s_),
-                        'd/err_d_fake_t/train': np.mean(err_d_fake_t_),
-                        'd/err_d_real/train': np.mean(err_d_real_),
-                        'd/err_d_fake/train': np.mean(err_d_fake_),
+            self.errors_dict.update({
+                        'd/err_d_real_s/test': np.mean(err_d_real_s_),
+                        'd/err_d_real_t/test': np.mean(err_d_real_t_),
+                        'd/err_d_fake_s/test': np.mean(err_d_fake_s_),
+                        'd/err_d_fake_t/test': np.mean(err_d_fake_t_),
+                        'd/err_d_real/test': np.mean(err_d_real_),
+                        'd/err_d_fake/test': np.mean(err_d_fake_),
                         'd/err_d/test': np.mean(err_d_),
                         'g/err_g_adv_s/test': np.mean(err_g_adv_s_),
                         'g/err_g_adv_t/test': np.mean(err_g_adv_t_),
@@ -261,15 +260,23 @@ class VFD_GAN(BaseModel):
         inp_shape = (self.args.batchsize, self.args.ich, 
                     self.args.nfr, self.args.isize, self.args.isize)
 
+        if self.args.ae:
+            from vfd_c2plus1d import AutoEncoder
+            Generator = AutoEncoder()
+        else:
+            from network import NetG
+            Generator = NetG()
+
+
         # Create and initialize networkgs.
         if len(self.args.gpu) > 1:
-            self.netg = torch.nn.DataParallel(NetG(), device_ids=self.args.gpu, dim=0)
+            self.netg = torch.nn.DataParallel(Generator, device_ids=self.args.gpu, dim=0)
             self.netd = torch.nn.DataParallel(NetD(self.args), device_ids=self.args.gpu, dim=0)
             self.netg = self.netg.cuda()
             self.netd = self.netd.cuda()
             cudnn.benchmark = True
         else:
-            self.netg = NetG().to(self.device)
+            self.netg = Generator.to(self.device)
             self.netd = NetD(self.args).to(self.device)
         self.netg.apply(weights_init)
         self.netd.apply(weights_init)
@@ -290,17 +297,14 @@ class VFD_GAN(BaseModel):
         #Loss function
         self.l_adv = l2_loss
         #self.l_pre = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(30))
-        self.l_con = nn.BCELoss()
+        self.l_con = nn.L1Loss()
         self.l_bce = bce_smooth
 
         #Setup Optimizer
-        if self.args.isTrain:
-            self.netg.train()
-            self.netd.train()
-            self.optimizer_d = optim.Adam(self.netd.parameters(), 
-                                    lr= self.args.lr, betas=(self.args.beta1, 0.999))
-            self.optimizer_g = optim.Adam(self.netg.parameters(), 
-                                    lr= self.args.lr, betas=(self.args.beta1, 0.999))
+        self.optimizer_d = optim.Adam(self.netd.parameters(), 
+                                lr= self.args.lr, betas=(self.args.beta1, 0.999))
+        self.optimizer_g = optim.Adam(self.netg.parameters(), 
+                                lr= self.args.lr, betas=(self.args.beta1, 0.999))
 
     def forward_g(self):
         self.predict = self.netg(self.input)
@@ -341,7 +345,7 @@ class VFD_GAN(BaseModel):
                      err_g_con * self.args.w_con
         err_g.backward(retain_graph=True)
 
-        self.train_errors_dict.update({
+        self.errors_dict.update({
                         'g/err_g/train': err_g.item(),
                         'g/err_g_adv/train': err_g_adv.item(),
                         'g/err_g_adv_s/train': err_g_adv_s.item(),
@@ -361,7 +365,7 @@ class VFD_GAN(BaseModel):
 
         err_d = (err_d_real + err_d_fake) * 0.5
 
-        self.train_errors_dict.update({
+        self.errors_dict.update({
                         'd/err_d_real_s/train': err_d_real_s.item(),
                         'd/err_d_real_t/train': err_d_real_t.item(),
                         'd/err_d_fake_s/train': err_d_fake_s.item(),

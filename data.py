@@ -144,6 +144,7 @@ class DataLoader(object):
         dataset = {}
         loader = lambda x: MdfDataLoader(self.isize, self.nfr, 
                                         self.plist[x], transforms=self.transforms[x])
+
         dataset['train'] = loader('train')
         dataset['test'] = loader('test')
        
