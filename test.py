@@ -3,6 +3,7 @@
 import argparse
 import os
 from tqdm import tqdm
+from collections import OrderedDict
 import torch
 from torch.utils.data import Dataset 
 from torchvision import transforms 
@@ -100,6 +101,16 @@ def pr(labels, scores, name):
 
     return pr_auc
 
+def fix_model_state_dict(state_dict):
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k
+        if name.startswith('module.'):
+            name = name[7:]
+        new_state_dict[name] = v
+    return new_state_dict
+
+
 
 def load_model(m):
     # LOAD MODEL
@@ -126,7 +137,7 @@ def load_model(m):
     # Apply Weight
     trained_dict = torch.load(m, map_location='cuda:0')['state_dict']
     try:
-        model.load_state_dict(trained_dict)
+        model.load_state_dict(fix_model_state_dict(trained_dict))
     except IOError:
         raise IOError("MODEL weights not fount")
         
@@ -153,7 +164,7 @@ def test():
 
     with torch.no_grad():
         for m_i, m in enumerate(model_list):
-            print(m)
+            print("\n {}".format(m))
             model, name = load_model(m)
             
             save_root = os.path.join(SAVEROOT, "iamges", name)
@@ -172,14 +183,15 @@ def test():
                 m_pre = morphology_proc(t_pre)
 
                 gts.append(gt.permute(0,2,3,4,1).cpu().numpy())
-                predicts.append(predict.permute(0,2,3,4,1).cpu().numpy())
+                predicts.append(m_pre.permute(0,2,3,4,1).cpu().numpy())
                 
                 # -- SAVE IMAGE --
+                """
                 grid = torch.cat([normalize(input), normalize(real), gray2rgb(gt), gray2rgb(predict), gray2rgb(t_pre), gray2rgb(m_pre)], dim=3)
                 for image in grid.permute(0,2,1,3,4):
                     save_image(image, os.path.join(save_root, "%06d.png" % (step)), nrow=args.nfr)
                     step += 1
-
+                """
                 pbar.set_description("[TEST %d/%d]" % (m_i+1, len(model_list)))
            
            

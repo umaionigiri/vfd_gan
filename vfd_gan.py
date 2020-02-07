@@ -76,11 +76,10 @@ class BaseModel():
         for t, e in self.errors_dict.items():
             spk = t.rsplit('/',1)
             self.writer.add_scalars(spk[0], {spk[1]: e}, self.global_step)
-        """
+
         # HISTOGRAM
         for t, h in self.hist_dict.items():
             self.writer.add_histogram(t, h)
-        """
 
         # SCORE
         for t, s in self.score_dict.items():
@@ -139,7 +138,7 @@ class BaseModel():
                 t_pre_ = threshold(predict_.detach())
                 m_pre_ = morphology_proc(t_pre_)
                 gts.append(gt.permute(0, 2, 3, 4, 1).cpu().numpy())
-                predicts.append(predict_.permute(0, 2, 3, 4, 1).cpu().numpy())
+                predicts.append(m_pre_.permute(0, 2, 3, 4, 1).cpu().numpy())
                 # NetD
                 # calc Optical Flow 
                 gt_3ch_ = gray2rgb(gt)
@@ -156,7 +155,7 @@ class BaseModel():
                 err_g_adv_t_.append(self.l_adv(t_feat_real_, t_feat_fake_).item())
                 err_g_adv_.append(err_g_adv_s_[-1] + err_g_adv_t_[-1])
                 err_g_con_.append(self.l_con(predict_, gt).item())
-                err_g_con_.append(err_g_adv_t_[-1] * self.args.w_adv + err_g_con_[-1] * self.args.w_con)
+                err_g_.append(err_g_adv_t_[-1] * self.args.w_adv + err_g_con_[-1] * self.args.w_con)
                 # Calc err_d
                 err_d_real_s_.append(self.l_bce(s_pred_real_, self.real_label).item())
                 err_d_real_t_.append(self.l_bce(t_pred_real_, self.real_label).item())
@@ -261,6 +260,7 @@ class VFD_GAN(BaseModel):
                     self.args.nfr, self.args.isize, self.args.isize)
 
         if self.args.ae:
+            print("\n --Load C2plus1d Model-- ")
             from vfd_c2plus1d import AutoEncoder
             Generator = AutoEncoder()
         else:
@@ -296,8 +296,7 @@ class VFD_GAN(BaseModel):
 
         #Loss function
         self.l_adv = l2_loss
-        #self.l_pre = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(30))
-        self.l_con = nn.L1Loss()
+        self.l_con = weighted_bce
         self.l_bce = bce_smooth
 
         #Setup Optimizer
@@ -320,7 +319,7 @@ class VFD_GAN(BaseModel):
                 = self.netd(pre_3ch.detach(), pre_flow.detach())
 
         t_pre = threshold(self.predict.detach())
-        m_pre = morphology_proc(self.predict.detach())
+        m_pre = morphology_proc(t_pre.detach())
         
         # set dict for summary
         self.color_video_dict.update({

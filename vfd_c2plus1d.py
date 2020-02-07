@@ -4,12 +4,12 @@ import torch.nn as nn
 
 
 class C2plus1d_Block(nn.Module):
-    def __init__(self, in_ch, out_ch, k=3):
+    def __init__(self, in_ch, out_ch, k=5):
         super(C2plus1d_Block, self).__init__()
         
         self.conv = nn.Conv3d(in_ch, out_ch, 1, stride=1)
 
-        self.spaceconv = nn.Conv3d(in_ch, in_ch, (1, k, k), stride=1, padding=(0, 1, 1), dilation=1, bias=False)
+        self.spaceconv = nn.Conv3d(in_ch, in_ch, (1, 3, 3), stride=1, padding=(0, 1, 1), dilation=1, bias=False)
         self.pointwise = nn.Conv3d(in_ch, out_ch, (3, 1, 1), stride=1, padding=(1, 0, 0), dilation=1, bias=False)
 
         self.bn1 = nn.BatchNorm3d(in_ch)
@@ -58,10 +58,10 @@ class AutoEncoder(nn.Module):
         self.down_sep3 = C2plus1d_Block(128, 256)
         self.down_sep4 = C2plus1d_Block(256, 512)
          
-        self.up_sep1 = c2plus1d_block(512, 256)
-        self.up_sep2 = c2plus1d_block(256+256, 256)
-        self.up_sep3 = c2plus1d_block(256+128, 128)
-        self.up_sep4 = c2plus1d_block(128+64, 64)
+        self.up_sep1 = C2plus1d_Block(512, 256)
+        self.up_sep2 = C2plus1d_Block(256+256, 256)
+        self.up_sep3 = C2plus1d_Block(256+128, 128)
+        self.up_sep4 = C2plus1d_Block(128+64, 64)
 
         self.conv_last = nn.Conv3d(64, 1, 3, stride=1, padding=1, bias=False)
         self.sigmoid = nn.Sigmoid()
@@ -84,8 +84,8 @@ class AutoEncoder(nn.Module):
         up_sep4 = self.up_sep4(x, down_samp=False) # 64x16x128x128
         
         x = self.conv_last(up_sep4) # 1x16x128x128
-
-        return self.sigmoid(x)
+        x = self.sigmoid(x)
+        return x
 
 
 

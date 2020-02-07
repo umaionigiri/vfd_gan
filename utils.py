@@ -26,6 +26,14 @@ def l2_loss(input, target, size_average=True):
     else:
         return torch.pow((input-target), 2)
 
+def weighted_bce(input, target, pos_weight=10):
+    input = torch.clamp(input, min=1e-8, max =1-1e-8)
+    if pos_weight is not None:
+        loss = pos_weight * (target * torch.log(input)) + (1-target) * torch.log(1-input)
+    else:
+        loss = target * torch.log(input) + (1 - target) * torch.log(1-input)
+    return torch.neg(torch.mean(loss))
+
 def bce_smooth(input, target, weight=None, reduction='mean', smooth_eps=None, from_logits=False):
     smooth_eps = smooth_eps or 0
     if smooth_eps > 0:
@@ -103,7 +111,7 @@ def morphology_proc(video):
     return torch.from_numpy(np.stack(morph_video)).cuda()
 
 def threshold(data):
-    t = torch.Tensor([0.45]).to('cuda')
+    t = torch.Tensor([0.7]).to('cuda')
     out = (data > t).float() * 1
     return out
 

@@ -9,8 +9,8 @@ class SepaConv(nn.Module):
         super(SepaConv, self).__init__()
         self.conv1 = nn.Conv3d(in_ch, in_ch, (1, 3, 3), stride=1, 
                                 padding=(0, 1, 1), dilation=1, bias=False)
-        self.pointwise = nn.Conv3d(in_ch, out_ch, (3, 1, 1), stride=1, 
-                                padding=(1, 0, 0), dilation=1, bias=False)
+        self.pointwise = nn.Conv3d(in_ch, out_ch, (1, 1, 1), stride=1, 
+                                padding=(0, 0, 0), dilation=1, bias=False)
         
     def forward(self, x):
         x = self.conv1(x)
@@ -22,7 +22,7 @@ class Block(nn.Module):
         super(Block, self).__init__()
 
         if out_fi != in_fi or strides != 1:
-            self.skip = nn.Conv3d(in_fi, out_fi, 1, stride=strides, bias=False)
+            self.skip = nn.Conv3d(in_fi, out_fi, 1, stride=(1, strides, strides), bias=False)
             self.skipbn = nn.BatchNorm3d(out_fi)
         else:
             self.skip = None
@@ -53,7 +53,7 @@ class Block(nn.Module):
             rep[0] = nn.ReLU(inplace=False)
         
         if strides != 1:
-            rep.append(nn.MaxPool3d(3, strides, 1))
+            rep.append(nn.MaxPool3d((1, 3, 3), (1, strides, strides), padding=(0,1,1)))
         self.rep = nn.Sequential(*rep)
 
     def forward(self, inp):
@@ -71,11 +71,11 @@ class Block(nn.Module):
 class DeConv(nn.Module):
     def __init__(self, in_fi, out_fi):
         super(DeConv, self).__init__()
-        self.conv = nn.Conv3d(in_fi, out_fi, 3, stride=1, padding=1, bias=False)
+        self.conv = nn.Conv3d(in_fi, out_fi, (1, 3, 3), stride=1, padding=(0, 1, 1), bias=False)
         self.bn = nn.BatchNorm3d(out_fi)
         self.lrelu = nn.LeakyReLU(0.2, inplace=True)
         self.dropout = nn.Dropout(p=0.25)
-        self.upsamp = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
+        self.upsamp = nn.Upsample(scale_factor=(1, 2, 2), mode='trilinear', align_corners=True)
 
     def forward(self, x):
         x = self.conv(x)
@@ -90,11 +90,11 @@ class Xception(nn.Module):
     def __init__(self, ich=3):
         super(Xception, self).__init__()
 
-        self.conv1 = nn.Conv3d(ich, 32, 3, stride=2, padding=1, bias=False)
+        self.conv1 = nn.Conv3d(ich, 32, (1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1), bias=False)
         self.bn1 = nn.BatchNorm3d(32)
         self.relu = nn.ReLU(inplace=True)
 
-        self.conv2 = nn.Conv3d(32, 64, 3, stride=1, padding=1, bias=False)
+        self.conv2 = nn.Conv3d(32, 64, (1, 3, 3), stride=1, padding=(0, 1, 1), bias=False)
         self.bn2 = nn.BatchNorm3d(64)
 
         self.block1 = Block(64, 128, reps=2, strides=2, start_with_relu=False, grow_first=True)
@@ -125,16 +125,17 @@ class Xception(nn.Module):
         self.uconv3 = DeConv(256, 128)
         self.uconv4 = DeConv(128, 32)
 
-        self.conv_last = nn.Conv3d(32, 1, 3, stride=1, padding=1)
+        self.conv_last = nn.Conv3d(32, 1, (1, 3, 3), stride=1, padding=(0, 1, 1))
         self.sigmoid = nn.Sigmoid()
 
 
     def forward(self, x):
-        x = self.conv1(x)
+        # 3x16x128x128
+        x = self.conv1(x) # 32x16x64x64
         x = self.bn1(x)
         x = self.relu(x)
         
-        x = self.conv2(x)
+        x = self.conv2(x) # 64x16x32x32
         x = self.bn2(x)
         x = self.relu(x)
 

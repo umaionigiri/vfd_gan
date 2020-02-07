@@ -15,7 +15,7 @@ import torchvision
 import torch.backends.cudnn as cudnn
 
 from evaluate import evaluate
-from utils import weights_init
+from utils import *
 
 class SpatialTempModel():
     def __init__(self, args, dataloader):
@@ -61,8 +61,7 @@ class SpatialTempModel():
         self.best_f1 = 0
         self.color_video_dict = OrderedDict()
         self.gray_video_dict = OrderedDict()
-        self.train_errors_dict = OrderedDict()
-        self.test_errors_dict = OrderedDict()
+        self.errors_dict = OrderedDict()
         self.score_dict = OrderedDict()
 
         # Make save dir for weight, tensorboard run file
@@ -140,7 +139,7 @@ class SpatialTempModel():
                 m_pre_ = morphology_proc(t_pre_)
 
                 gts.append(gt_.permute(0,2,3,4,1).cpu().numpy())
-                predicts.append(predict_.permute(0,2,3,4,1).cpu().numpy())
+                predicts.append(m_pre_.permute(0,2,3,4,1).cpu().numpy())
 
                 errs.append(self.loss(predict_, gt_).item())
 

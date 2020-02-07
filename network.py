@@ -41,7 +41,6 @@ class NetG(nn.Module):
         self.upsamp = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
 
         self.conv_last = nn.Conv3d(ngf, 1, 3, stride=1, padding=1, bias=False)
-        self.tanh = nn.Tanh()
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
@@ -87,6 +86,7 @@ class NetG(nn.Module):
         x = self.uconv1(x)
 
         predict = self.conv_last(x)
+
         predict = self.sigmoid(predict)
 
         return predict
@@ -193,8 +193,8 @@ class NetD(nn.Module):
         super(NetD, self).__init__()
 
         self.spatdisc = SDisc(3, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
-        #self.tempdisc = TDisc(args.ich, args.isize, kernel=(3, 1, 1), padding=(1, 0, 0))
-        self.tempdisc = SDisc(3, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
+        self.tempdisc = TDisc(3, args.isize, kernel=(3, 1, 1), padding=(1, 0, 0))
+        #self.tempdisc = SDisc(3, args.nfr, kernel=(1, 3, 3), padding=(0, 1, 1))
 
     def forward(self, x, y):
 
