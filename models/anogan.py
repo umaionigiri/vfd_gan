@@ -17,8 +17,9 @@ import torchvision
 import torch.backends.cudnn as cudnn
 
 
-from utils import *
-from evaluate import evaluate
+from lib.utils import *
+from lib.evaluate import evaluate
+from lib.train_gan import GANBaseModel
 
 def predict_forg(gout, input):
     # predict image
@@ -35,9 +36,9 @@ def predict_forg(gout, input):
     #predict = np.expand_dims(morphology_proc(predict), axis=1)
     return torch.from_numpy(predict).permute(0, 4, 1, 2, 3).to('cuda')
 
-class Generator(nn.Module):
+class NetG(nn.Module):
     def __init__(self):
-        super(Generator, self).__init__()
+        super(NetG, self).__init__()
         
         self.layer1 = nn.Sequential(
                     nn.Linear(100, 2*512*16*16),
@@ -77,9 +78,9 @@ class Generator(nn.Module):
         x = self.layer3(x)
         return x
 
-class Discriminator(nn.Module):
+class NetD(nn.Module):
     def __init__(self):
-        super(Discriminator, self).__init__()
+        super(NetD, self).__init__()
         self.layer1 = nn.Sequential(
                     nn.Conv3d(3, 32, 3, stride=1, padding=1), # 32x16x128x128
                     nn.BatchNorm3d(32),
@@ -117,53 +118,20 @@ class Discriminator(nn.Module):
 
         return out, feature
 
-class AnoGAN():
+class AnoGAN(GANBaseModel):
     def __init__(self, args, dataloader):
-        super(AnoGAN, self).__init__()
+        super(AnoGAN, self).__init__(args, dataloader)
+
         # Create and initialize networkgs.
-
-        self.args = args
-        self.dataloader = dataloader
-
-        self.global_step = 0
-        self.best_roc = 0
-        self.best_pr = 0
-        self.color_video_dict = OrderedDict()
-        self.gray_video_dict = OrderedDict()
-        self.train_errors_dict = {}
-        self.test_errors_dict = {}
-        self.hist_dict = OrderedDict()
-        self.score_dict = OrderedDict()
- 
-        # make save root dir
-        from datetime import datetime
-        current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        comment = "b{}xd{}xwh{}_lr-{}".format(args.batchsize, args.nfr, args.isize, args.lr)
-        self.save_root_dir = os.path.join(args.result_root, args.model, comment, current_time)
-        if not os.path.exists(self.save_root_dir): os.makedirs(self.save_root_dir)
-        # make weights save dir
-        self.weight_dir = os.path.join(self.save_root_dir,'weights')
-        if not os.path.exists(self.weight_dir): os.makedirs(self.weight_dir)
-        # make tensorboard logdir 
-        logdir = os.path.join(self.save_root_dir, "runs")
-        if not os.path.exists(logdir): os.makedirs(logdir)
-        self.writer = SummaryWriter(log_dir=logdir)
-        #save args
-        with open(self.save_root_dir+"/args.txt", mode="w") as f:
-            json.dump(args.__dict__, f, indent=4)
-
-        print("\n SAVE PATH == {} \n".format(self.save_root_dir))
-
-
         if len(self.args.gpu) > 1:
-            self.netg = torch.nn.DataParallel(Generator(), device_ids=self.args.gpu, dim=0)
-            self.netd = torch.nn.DataParallel(Discriminator(), device_ids=self.args.gpu, dim=0)
+            self.netg = torch.nn.DataParallel(NetG(), device_ids=self.args.gpu, dim=0)
+            self.netd = torch.nn.DataParallel(NetD(), device_ids=self.args.gpu, dim=0)
             self.netg = self.netg.cuda()
             self.netd = self.netd.cuda()
             cudnn.benchmark = True
         else:
-            self.netg = Generator().to('cuda')
-            self.netd = Discriminator().to('cuda')
+            self.netg = NetG().to('cuda')
+            self.netd = NetD().to('cuda')
         self.netg.apply(weights_init)
         self.netd.apply(weights_init)
 
@@ -173,38 +141,7 @@ class AnoGAN():
 
         self.ones_label = torch.ones(args.batchsize).cuda()
         self.zeros_label = torch.zeros(args.batchsize).cuda()
-
-    def update_summary(self):
-        # VIDEO
-        for t, v in self.color_video_dict.items():
-            grid = [make_grid(f, nrow=self.args.batchsize, normalize=True) for f in v.permute(2, 0, 1, 3, 4)]
-            self.writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), self.global_step)
-
-        for t, v in self.gray_video_dict.items():
-            grid = [make_grid(f, nrow=self.args.batchsize, normalize=False) for f in v.permute(2, 0, 1, 3, 4)]
-            self.writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), self.global_step)
-
-        # ERROR
-        for t, e in self.train_errors_dict.items():
-            self.writer.add_scalar(t, e, self.global_step)
-        for t, e in self.test_errors_dict.items():
-            self.writer.add_scalar(t, e, self.global_step)
-
-        # HISTOGRAM
-        for t, h in self.hist_dict.items():
-            self.writer.add_histogram(t, h)
-
-        # SCORE
-        for t, s in self.score_dict.items():
-            self.writer.add_scalar(t, s, self.global_step)
-
-    def save_weights(self, name_head):
-        # -- Save Weights of NetG and NetD --
-        torch.save({'epoch': self.epoch + 1, 'state_dict': self.netg.state_dict()},
-                   '%s/%s_ep%04d_netG.pth' % (self.weight_dir, name_head, self.epoch))
-        torch.save({'epoch': self.epoch + 1, 'state_dict': self.netd.state_dict()},
-                   '%s/%s_ep%04d_netD.pth' % (self.weight_dir, name_head, self.epoch))
-    
+   
     def test(self):
         self.netg.eval()
         self.netd.eval()
@@ -218,17 +155,6 @@ class AnoGAN():
         predicts = []
 
         with torch.no_grad():
-            # load weights 
-            if self.args.load_weights != " " :
-                path = self.args.load_weights
-                pretrained_dict = torch.load(path)['state_dict']
-
-                try:
-                    self.netg.load_state_dict(pretrained_dict)
-                except IOError:
-                    raise IOError("netG weights not found")
-                print("Loaded weights.")
-
             # Test
             pbar = tqdm(self.dataloader['test'], leave=True, ncols=100, total=len(self.dataloader['test']))
             for i, data in enumerate(pbar):
@@ -236,7 +162,7 @@ class AnoGAN():
                 # set test data 
                 input, real, gt, lb = (d.to('cuda') for d in data)
                  
-                # Discriminator
+                # NetD
 
                 dis_real_ = self.netd(real)[0].view(-1)
                 dis_loss_real_.append(self.loss(dis_real_, self.ones_label).item())
@@ -247,7 +173,7 @@ class AnoGAN():
                 dis_loss_fake_.append(self.loss(dis_fake_, self.zeros_label).item())
                 dis_loss_.append(dis_loss_real_[-1] + dis_loss_fake_[-1])
 
-                # Generator
+                # NetG
                 dis_fake_ = self.netd(gen_fake_)[0].view(-1)
                 gen_loss_.append(self.loss(dis_fake_, self.ones_label).item())
                 
@@ -295,77 +221,50 @@ class AnoGAN():
                     "score/pr": pr,
                     "score/f1": f1
                 })
-            self.test_errors_dict.update({
-                        'test/err_d': np.mean(gen_loss_),
-                        'test/err_g': np.mean(dis_loss_)
+            self.errors_dict.update({
+                        'd/err_d/test': np.mean(gen_loss_),
+                        'd/err_g/test': np.mean(dis_loss_)
                         })
 
-    def train(self):
-       
-        for self.epoch in range(self.args.ep):
+    def optimize_params(self):
+        # NetD
+        self.netd.zero_grad()
+        
+        dis_real = self.netd(self.real)[0].view(-1)
+        dis_loss_real = self.loss(dis_real, self.ones_label)
+        dis_loss_real.backward()
+        
+        z = torch.randn(self.args.batchsize, 100, device='cuda')
+        gen_fake = self.netg(z)
+        dis_fake = self.netd(gen_fake.detach())[0].view(-1)
+        dis_loss_fake = self.loss(dis_fake, self.zeros_label)
+        dis_loss_fake.backward()
+        dis_loss = dis_loss_real + dis_loss_fake
+        self.d_opt.step()
 
-            pbar  = tqdm(self.dataloader['train'], leave=True, ncols=100,
-                                    total=len(self.dataloader['train']))
+        # NetG
+        self.netg.zero_grad()
+        dis_fake = self.netd(gen_fake)[0].view(-1)
+        gen_loss = self.loss(dis_fake, self.ones_label)
+        gen_loss.backward(retain_graph=True)
+        self.g_opt.step()
+        
+        predict = predict_forg(gen_fake.detach(), self.real)
+        t_pre = threshold(predict.detach())
+        m_pre = morphology_proc(t_pre)
+        
+        self.color_video_dict.update({
+            "train/input-real-gen": torch.cat([self.input, self.real, gen_fake], dim=3),
+            })
+        self.gray_video_dict.update({
+            "train/gt-pre-th-mor": torch.cat([self.gt, predict, t_pre, m_pre], dim=3)
+            })
+        
+        self.errors_dict.update({
+            'd/err_d/train': dis_loss.item(),
+            'g/err_g/train': gen_loss.item()
+            })
+    
 
-            for i, data in enumerate(pbar):
-                    
-                self.global_step += 1
-
-                inp, real, gt, lb = (d.to('cuda') for d in data)
-                 
-                # Discriminator
-                self.netd.zero_grad()
-
-                dis_real = self.netd(real)[0].view(-1)
-                dis_loss_real = self.loss(dis_real, self.ones_label)
-                dis_loss_real.backward()
-
-                z = torch.randn(self.args.batchsize, 100, device='cuda')
-                gen_fake = self.netg(z)
-                dis_fake = self.netd(gen_fake.detach())[0].view(-1)
-                dis_loss_fake = self.loss(dis_fake, self.zeros_label)
-                dis_loss_fake.backward()
-                dis_loss = dis_loss_real + dis_loss_fake
-                self.d_opt.step()
-
-                # Generator
-                self.netg.zero_grad()
-                dis_fake = self.netd(gen_fake)[0].view(-1)
-                gen_loss = self.loss(dis_fake, self.ones_label)
-                gen_loss.backward(retain_graph=True)
-                self.g_opt.step()
                 
-                predict = predict_forg(gen_fake.detach(), real)
-                t_pre = threshold(predict.detach())
-                m_pre = morphology_proc(t_pre)
-
-                self.color_video_dict.update({
-                            "train/input-real-gen": torch.cat([inp, real, gen_fake], dim=3),
-                        })
-                self.gray_video_dict.update({
-                            "train/gt-pre-th-mor": torch.cat([gt, predict, t_pre, m_pre], dim=3)
-                        })
- 
-                self.train_errors_dict.update({
-                        'train/err_d': dis_loss.item(),
-                        'train/err_g': gen_loss.item()
-                    })
-
-                if self.global_step % self.args.test_freq == 0:
-                    self.test()
-                if self.global_step % self.args.display_freq == 0:
-                    self.update_summary()
-                    
-                pbar.set_description("[TRAIN Epoch %d/%d]" % (self.epoch+1, self.args.ep))
-
-        print("Training model Done.")
- 
-
-
-
-
-
-
-
-
 

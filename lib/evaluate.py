@@ -1,13 +1,4 @@
-""" Evaluate ROC
 
-Returns:
-    auc, eer: Area under the curve, Equal Error Rate
-"""
-
-# pylint: disable=C0103,C0301
-
-##
-# LIBRARIES
 from __future__ import print_function
 
 import csv
@@ -17,8 +8,6 @@ from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 from matplotlib import rc
-#rc('font', **{'family': 'serif', 'serif': ['Computer Modern']})
-#rc('text', usetex=True)
 
 fig=plt.figure()
 
@@ -37,15 +26,11 @@ def evaluate(labels, scores, best=None, iter=None, saveto=None, metric=None):
     else:
         raise NotImplementedError("Check the evaluation metric.")
 
-##
 def roc(labels, scores, best, iter, saveto=None):
     """Compute ROC curve and ROC area for each class"""
     fpr = dict()
     tpr = dict()
     roc_auc = dict()
-
-    #labels = labels.cpu()
-    #scores = scores.cpu()
 
     # True/False Positive Rates.
     fpr, tpr, _ = roc_curve(labels, scores)

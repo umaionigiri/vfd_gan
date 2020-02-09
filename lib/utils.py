@@ -1,15 +1,51 @@
 
 import cv2
-from PIL import Image
 import numpy as np
 import math
+from PIL import Image
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms 
+
 from videotransforms import video_transforms, volume_transforms
 from torchvision.utils import save_image, make_grid
+
+def fix_model_state_dict(state_dict):
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k
+        if name.startswith('module.'):
+            name = name[7:]
+        new_state_dict[name] = v
+    return new_state_dict
+
+def update_summary(writer, bs, step, cvideo_dict, gvideo_dict, errors_dict, score_dict, hist_dict=None):
+    # VIDEO
+    for t, v in cvideo_dict.items():
+        grid = [make_grid(f, nrow=bs, normalize=True) 
+                for f in v.permute(2, 0, 1, 3, 4)]
+        writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), step)
+
+    for t, v in gvideo_dict.items():
+        grid = [make_grid(f, nrow=bs, normalize=False) 
+                for f in v.permute(2, 0, 1, 3, 4)]
+        writer.add_video(t, torch.unsqueeze(torch.stack(grid), 0), step)
+
+    # ERROR
+    for t, e in errors_dict.items():
+        spk = t.rsplit('/', 1)
+        writer.add_scalars(spk[0], {spk[1]: e}, step)
+
+    # SCORE
+    for t, s in score_dict.items():
+        writer.add_scalar(t, s, step)
+
+    # HISTOGRAM
+    if not hist_dict == None:
+        for t, h in self.hist_dict.items():
+            self.writer.add_histogram(t, h)
 
 
 def weights_init(m):
