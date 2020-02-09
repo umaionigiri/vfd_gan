@@ -297,7 +297,7 @@ class VFD_GAN(BaseModel):
         #Loss function
         self.l_adv = l2_loss
         self.l_con = weighted_bce
-        self.l_bce = bce_smooth
+        self.l_bce = nn.BCELoss()
 
         #Setup Optimizer
         self.optimizer_d = optim.Adam(self.netd.parameters(), 

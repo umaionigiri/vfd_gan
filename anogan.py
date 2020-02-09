@@ -46,20 +46,28 @@ class Generator(nn.Module):
                     )
         # 512x2x16x16
         self.layer2 = nn.Sequential(
+                    nn.Dropout(p=0.25),
                     nn.ConvTranspose3d(512, 256, 3, 2, 1, 1), # 256x4x32x32
+                    nn.Conv3d(256, 256, 3, 1, 1), # 256x4x32x32
                     nn.BatchNorm3d(256),
                     nn.LeakyReLU(),
+                    nn.Dropout(p=0.25),
                     nn.ConvTranspose3d(256, 128, 3, 2, 1, 1), # 128x8x64x64
+                    nn.Conv3d(128, 128, 3, 1, 1), # 256x4x32x32
                     nn.BatchNorm3d(128),
-                    nn.LeakyReLU(),
+                    nn.LeakyReLU()
                     )
 
         self.layer3 = nn.Sequential(
+                    nn.Dropout(p=0.25),
                     nn.ConvTranspose3d(128, 64, 3, 1, 1), # 64x8x64x64
+                    nn.Conv3d(64, 64, 3, 1, 1), # 256x4x32x32
                     nn.BatchNorm3d(64),
                     nn.LeakyReLU(),
+                    nn.Dropout(p=0.25),
                     nn.ConvTranspose3d(64, 3, 3, 2, 1, 1), # 3x16x128x128
-                    nn.Tanh()
+                    nn.Conv3d(3, 3, 3, 1, 1), # 256x4x32x32
+                    nn.Sigmoid()
                     )
 
     def forward(self, z):
@@ -73,25 +81,30 @@ class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
         self.layer1 = nn.Sequential(
-                    nn.Conv3d(3, 8, 3, stride=1, padding=1), # 8x16x128x128
-                    nn.BatchNorm3d(8),
+                    nn.Conv3d(3, 32, 3, stride=1, padding=1), # 32x16x128x128
+                    nn.BatchNorm3d(32),
                     nn.LeakyReLU(),
-                    nn.Conv3d(8, 16, 3, stride=2, padding=1), # 16x8x64x64
-                    nn.BatchNorm3d(16),
-                    nn.LeakyReLU(16),
+                    nn.Conv3d(32, 64, 3, stride=1, padding=1), # 64x16x128x128
+                    nn.Conv3d(64, 64, 3, stride=1, padding=1), # 64x16x128x128
+                    nn.BatchNorm3d(64),
+                    nn.LeakyReLU(64),
+                    nn.AvgPool3d(2) #64x8x64x64
                 )
 
         self.layer2 = nn.Sequential(
-                    nn.Conv3d(16, 32, 3, stride=2, padding=1), # 32x4x32x32
-                    nn.BatchNorm3d(32),
+                    nn.Conv3d(64, 128, 3, stride=1, padding=1), # 128x8x64x64
+                    nn.Conv3d(128, 128, 3, stride=1, padding=1), # 128x8x64x64
+                    nn.BatchNorm3d(128),
                     nn.LeakyReLU(),
-                    nn.Conv3d(32, 64, 3, stride=2, padding=1), # 64x2x16x16
-                    nn.BatchNorm3d(64),
+                    nn.AvgPool3d(2), # 128x4x32x32
+                    nn.Conv3d(128, 256, 3, stride=1, padding=1), # 256x4x32x32
+                    nn.BatchNorm3d(256),
                     nn.LeakyReLU(),
+                    nn.AvgPool3d(2) # 256x2x16x16
                 )
 
         self.fc = nn.Sequential(
-                    nn.Linear(64*2*16*16, 1),
+                    nn.Linear(256*2*16*16, 1),
                     nn.Sigmoid()
                 )
 
@@ -154,7 +167,7 @@ class AnoGAN():
         self.netg.apply(weights_init)
         self.netd.apply(weights_init)
 
-        self.loss = nn.MSELoss()
+        self.loss = nn.BCELoss()
         self.g_opt = torch.optim.Adam(self.netg.parameters(), lr=5*args.lr, betas=(0.5, 0.999))
         self.d_opt = torch.optim.Adam(self.netd.parameters(), lr=args.lr, betas=(0.5, 0.999))
 
@@ -301,21 +314,22 @@ class AnoGAN():
                 inp, real, gt, lb = (d.to('cuda') for d in data)
                  
                 # Discriminator
-                self.d_opt.zero_grad()
+                self.netd.zero_grad()
 
                 dis_real = self.netd(real)[0].view(-1)
                 dis_loss_real = self.loss(dis_real, self.ones_label)
+                dis_loss_real.backward()
 
                 z = torch.randn(self.args.batchsize, 100, device='cuda')
                 gen_fake = self.netg(z)
                 dis_fake = self.netd(gen_fake.detach())[0].view(-1)
                 dis_loss_fake = self.loss(dis_fake, self.zeros_label)
+                dis_loss_fake.backward()
                 dis_loss = dis_loss_real + dis_loss_fake
-                dis_loss.backward()
                 self.d_opt.step()
 
                 # Generator
-                self.g_opt.zero_grad()
+                self.netg.zero_grad()
                 dis_fake = self.netd(gen_fake)[0].view(-1)
                 gen_loss = self.loss(dis_fake, self.ones_label)
                 gen_loss.backward(retain_graph=True)

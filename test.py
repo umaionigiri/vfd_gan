@@ -117,19 +117,19 @@ def load_model(m):
     if 'ganbase' in m:
         from network import NetG
         model = NetG()
-        name = "ganbase"
+        name = "Propose model2[GAN]"
     elif 'c2plus1d' in m:
         from vfd_c2plus1d import AutoEncoder
         model = AutoEncoder()
-        name = "c2plus1d"
+        name = "Propose Model1[(2+1)DCNN]"
     elif 'xception' in m:
         from xception import Xception
         model = Xception()
-        name = "xception"
+        name = "XceptionNet"
     elif 'clstm' in m:
         from convlstm import ConvLSTMModel
         model = ConvLSTMModel(args)
-        name = "clstm"
+        name = "ConvLSTM"
     else:
         print("Weight path not found.")
         exit()
@@ -183,7 +183,7 @@ def test():
                 m_pre = morphology_proc(t_pre)
 
                 gts.append(gt.permute(0,2,3,4,1).cpu().numpy())
-                predicts.append(m_pre.permute(0,2,3,4,1).cpu().numpy())
+                predicts.append(predict.permute(0,2,3,4,1).cpu().numpy())
                 
                 # -- SAVE IMAGE --
                 """
@@ -191,9 +191,8 @@ def test():
                 for image in grid.permute(0,2,1,3,4):
                     save_image(image, os.path.join(save_root, "%06d.png" % (step)), nrow=args.nfr)
                     step += 1
-                """
                 pbar.set_description("[TEST %d/%d]" % (m_i+1, len(model_list)))
-           
+                """
            
             gts = np.asarray(np.stack(gts), dtype=np.int32).flatten()
             predicts = np.asarray(np.stack(predicts)).flatten()
