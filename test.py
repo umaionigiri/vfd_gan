@@ -15,8 +15,8 @@ from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 from matplotlib import rc
 
-from data import MdfDataLoader
-from utils import *
+from lib.data import MdfDataLoader
+from lib.utils import *
 from videotransforms import video_transforms, volume_transforms
 
 parser = argparse.ArgumentParser()
@@ -115,19 +115,19 @@ def fix_model_state_dict(state_dict):
 def load_model(m):
     # LOAD MODEL
     if 'ganbase' in m:
-        from network import NetG
+        from models.mygannet import NetG
         model = NetG()
-        name = "Propose model2[GAN]"
+        name = "Propose model[GAN]"
     elif 'c2plus1d' in m:
-        from vfd_c2plus1d import AutoEncoder
+        from models.mystcnn import AutoEncoder
         model = AutoEncoder()
-        name = "Propose Model1[(2+1)DCNN]"
+        name = "(2+1)DCNN"
     elif 'xception' in m:
-        from xception import Xception
+        from models.xception import Xception
         model = Xception()
         name = "XceptionNet"
     elif 'clstm' in m:
-        from convlstm import ConvLSTMModel
+        from models.convlstm import ConvLSTMModel
         model = ConvLSTMModel(args)
         name = "ConvLSTM"
     else:

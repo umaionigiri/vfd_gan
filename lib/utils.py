@@ -62,7 +62,7 @@ def l2_loss(input, target, size_average=True):
     else:
         return torch.pow((input-target), 2)
 
-def weighted_bce(input, target, pos_weight=5):
+def weighted_bce(input, target, pos_weight=2):
     input = torch.clamp(input, min=1e-8, max =1-1e-8)
     if pos_weight is not None:
         loss = (target * torch.log(input)) + pos_weight * (1-target) * torch.log(1-input)

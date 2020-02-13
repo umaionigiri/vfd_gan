@@ -3,6 +3,9 @@ name = "pypi"
 url = "https://pypi.org/simple"
 verify_ssl = true
 
+[scripts]
+pretrain = "python train.py --tr_plist /mnt/fs2/2018/ohshiro/research/vfd/lists/pre_train_path_list.txt --ts_plist /mnt/fs2/2018/ohshiro/research/vfd/lists/pre_test_path_list/txt "
+
 [dev-packages]
 
 [packages]

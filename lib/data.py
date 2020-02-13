@@ -102,6 +102,7 @@ class MdfDataLoader(Dataset):
             if mask == True:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame = cv2.bitwise_not(frame)
+                frame = cv2.Canny(frame, 100, 200)
             else:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame = Image.fromarray(np.uint8(frame)) 

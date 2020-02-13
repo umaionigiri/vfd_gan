@@ -11,7 +11,7 @@ class Args():
         # Path
         TR_PLIST = "/mnt/fs2/2018/ohshiro/vfd/lists/semi_med_train_path_list.txt"
         TS_PLIST = "/mnt/fs2/2018/ohshiro/vfd/lists/semi_med_test_path_list.txt"
-        RESULT_PATH = "/mnt/fs2/2018/ohshiro/vfd/results"
+        RESULT_PATH = "/mnt/fs2/2018/ohshiro/research/vfd/results"
         self.parser.add_argument('--tr_plist', default=TR_PLIST, type=str, help='train data path list. ')
         self.parser.add_argument('--ts_plist', default=TS_PLIST, type=str, help='test data path list. ')
         self.parser.add_argument('--result_root', default=RESULT_PATH, type=str, help='save any result path.')
@@ -24,15 +24,14 @@ class Args():
         self.parser.add_argument('--workers', default=4, type=int, help='num_workers. Default=4')
 
         # Network
-        self.parser.add_argument('--model', default="mygan", type=str, help='train model. 
-                                            MyGANmodel=mygan, MySpatialTempmodel=c2plus1d, ConvLSTM=clstm, XceptionNet=xception.        
-                                            Default=mygan ')
+        self.parser.add_argument('--model', default="mygan", type=str, help='train model. MyGANmodel=mygan, MySpatialTempmodel=c2plus1d, ConvLSTM=clstm, XceptionNet=xception. Default=mygan ')
 
         # Train
         self.parser.add_argument('--lr', default=2e-5, type=float, help='initial learning rate for adam. Default=2e-5')
         self.parser.add_argument('--beta1', default=0.5, type=float, help='momentum term of adam. Default=0.5')
         self.parser.add_argument('--w_adv', default=1, type=int, help='adversarial loss weight. Default=1')
         self.parser.add_argument('--w_con', default=10, type=int, help='adversarial loss weight. Default=10')
+        self.parser.add_argument('--pos_weight', default=2, type=int, help='weighted BCE parameter. Default=2')
         self.parser.add_argument('--freq', default=50, type=int, 
                                 help='frequency of update tensorboard and test. Default=50')
 
