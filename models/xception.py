@@ -11,10 +11,13 @@ class SepaConv(nn.Module):
                                 padding=(0, 1, 1), dilation=1, bias=False)
         self.pointwise = nn.Conv3d(in_ch, out_ch, (1, 1, 1), stride=1, 
                                 padding=(0, 0, 0), dilation=1, bias=False)
+        self.relu = nn.ReLU()
         
     def forward(self, x):
         x = self.conv1(x)
+        x = self.relu(x)
         x = self.pointwise(x)
+        x = self.relu(x)
         return x
 
 class Block(nn.Module):

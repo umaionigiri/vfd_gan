@@ -8,19 +8,23 @@ import torch.optim as optim
 from lib.train_gan import GANBaseModel
 from lib.evaluate import evaluate
 from lib.utils import *
+from models.spatiotempconv import SpatioTemporalConv
 
 class NetgConv(nn.Module):
-    def __init__(self, in_fi, out_fi):
+    def __init__(self, in_fi, out_fi, kernel_size=3):
         super(NetgConv, self).__init__()
-
-        self.conv = nn.Conv3d(in_fi, out_fi, 3, stride=1, padding=1, bias=False)
+        padding = kernel_size//2
+        self.conv = SpatioTemporalConv(in_fi, out_fi, kernel_size, padding=padding)
+        #self.conv = nn.Conv3d(in_fi, out_fi, 3, stride=1, padding=1, bias=False)
         self.bn = nn.BatchNorm3d(out_fi)
         self.lrelu = nn.LeakyReLU(0.2, inplace=True)
 
     def forward(self, x):
+
         x = self.conv(x)
         x = self.bn(x)
         x = self.lrelu(x)
+
         return x
 
 
@@ -98,10 +102,10 @@ class NetG(nn.Module):
         
 
 class NetdConv(nn.Module):
-    def __init__(self, in_fi, out_fi, kernel=None, padding=None):
+    def __init__(self, in_fi, out_fi, kernel_size=None, padding=None):
         super(NetdConv, self).__init__()
-
-        self.conv = nn.Conv3d(in_fi, out_fi, kernel, stride=1, padding=padding, bias=False)
+        self.conv = SpatioTemporalConv(in_fi, out_fi, kernel_size, padding=padding)
+        #self.conv = nn.Conv3d(in_fi, out_fi, kernel, stride=1, padding=padding, bias=False)
         self.bn = nn.BatchNorm3d(out_fi)
         self.lrelu = nn.LeakyReLU()
 
@@ -117,7 +121,7 @@ class SDisc(nn.Module):
         super(SDisc, self).__init__()
 
         # input size == (B, C, D, H, W)
-        netdconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
+        netdconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel_size=kernel, padding=padding)
         self.dconv1 = netdconv(nc, ndf)
         self.dconv2 = netdconv(ndf, ndf*2)
         self.dconv3 = netdconv(ndf*2, ndf*4)
@@ -162,7 +166,7 @@ class TDisc(nn.Module):
         super(TDisc, self).__init__()
 
         # input size == (B, C, D, H, W)
-        netdconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel=kernel, padding=padding)
+        netdconv = lambda in_fi, out_fi: NetdConv(in_fi, out_fi, kernel_size=kernel, padding=padding)
         self.dconv1 = netdconv(nc, ndf)
         self.dconv2 = netdconv(ndf, ndf*2)
         self.dconv3 = netdconv(ndf*2, ndf*4)
@@ -258,6 +262,7 @@ class MyGAN(GANBaseModel):
 
         #Loss function
         self.l_adv = l2_loss
+        self.l_con = lambda output, target: weighted_bce(output, target, pos_weight=self.args.pos_weight)
         self.l_con = weighted_bce
         self.l_bce = nn.BCELoss()
 
